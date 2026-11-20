@@ -37,7 +37,7 @@ target_compile_definitions(xsystem4 PRIVATE
   USE_GLES
   )
 
-target_include_directories(xsystem4 PRIVATE include)
+target_include_directories(xsystem4 PRIVATE include src)
 
 execute_process(
   COMMAND git rev-parse --short HEAD
