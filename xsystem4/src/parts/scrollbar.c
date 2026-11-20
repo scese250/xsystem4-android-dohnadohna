@@ -470,12 +470,22 @@ enum parts_scrollbar_hit parts_scrollbar_hittest(struct parts *parts, Point pos)
 		return PARTS_SCROLLBAR_MISS;
 	struct scrollbar_geometry g;
 	scrollbar_geometry(parts, look, &g);
+#ifdef __ANDROID__
+	// Expand touch hit area around the narrow desktop scrollbar without
+	// changing its rendered visuals.
+	const float pad_x = scrollbar_vertical(parts) ? 18.0f : 8.0f;
+	const float pad_y = scrollbar_vertical(parts) ? 8.0f : 18.0f;
+#else
+	const float pad_x = 0.0f;
+	const float pad_y = 0.0f;
+#endif
 	if (g.bar_shown && look->bar[0].handle && !parts->pass_cursor
-			&& x >= g.bar.x && x < g.bar.x + look->bar[0].w
-			&& y >= g.bar.y && y < g.bar.y + look->bar[0].h)
+			&& x >= g.bar.x - pad_x && x < g.bar.x + look->bar[0].w + pad_x
+			&& y >= g.bar.y - pad_y && y < g.bar.y + look->bar[0].h + pad_y)
 		return PARTS_SCROLLBAR_BAR;
-	if (look->bg.handle && x >= g.bg.x && x < g.bg.x + look->bg.w
-			&& y >= g.bg.y && y < g.bg.y + look->bg.h)
+	if (look->bg.handle
+			&& x >= g.bg.x - pad_x && x < g.bg.x + look->bg.w + pad_x
+			&& y >= g.bg.y - pad_y && y < g.bg.y + look->bg.h + pad_y)
 		return PARTS_SCROLLBAR_TRACK;
 	return PARTS_SCROLLBAR_MISS;
 }

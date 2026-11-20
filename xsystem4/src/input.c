@@ -2019,6 +2019,18 @@ void handle_events(void)
 			}
 			if (SDL_PointInFRect(&(SDL_FPoint){ e.tfinger.x, e.tfinger.y }, &long_touch_finger_rect))
 				break;
+			// If a touch press is still deferred and the finger started dragging,
+			// deliver the press immediately at its original touch coordinate so
+			// drag targets (such as scrollbars) hit-test where the finger landed.
+			if (deferred_synthetic_mouse_event.timestamp &&
+			    deferred_synthetic_mouse_event.state == SDL_PRESSED &&
+			    sdl.viewport.w > 0 && sdl.viewport.h > 0) {
+				int gx = (deferred_synthetic_mouse_event.x - sdl.viewport.x) * sdl.w / sdl.viewport.w;
+				int gy = (deferred_synthetic_mouse_event.y - sdl.viewport.y) * sdl.h / sdl.viewport.h;
+				pointer_set(MOUSE_POS_WARP, gx, gy);
+				synthetic_mouse_event(&deferred_synthetic_mouse_event);
+				deferred_synthetic_mouse_event.timestamp = 0;
+			}
 			// Cancel the timer only if Ctrl emulation has not already started.
 			if (!key_state[VK_CONTROL])
 				long_touch_start_timestamp = 0;
@@ -2041,6 +2053,17 @@ void handle_events(void)
 			break;
 		case SDL_MULTIGESTURE:
 			if (e.mgesture.numFingers == 2) {
+				if (sdl.viewport.w > 0 && sdl.viewport.h > 0) {
+					int dw = 0, dh = 0;
+					SDL_GL_GetDrawableSize(sdl.window, &dw, &dh);
+					if (dw > 0 && dh > 0) {
+						int px = (int)(e.mgesture.x * dw);
+						int py = (int)(e.mgesture.y * dh);
+						int gx = (px - sdl.viewport.x) * sdl.w / sdl.viewport.w;
+						int gy = (py - sdl.viewport.y) * sdl.h / sdl.viewport.h;
+						pointer_set(MOUSE_POS_WARP, gx, gy);
+					}
+				}
 				if (scroll_gesture_y < 0.0f) {
 					scroll_gesture_y = e.mgesture.y;
 					two_finger_tap.start_x = e.mgesture.x;

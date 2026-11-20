@@ -7,11 +7,14 @@
         android:id="@+id/add_game_folder"
         android:title="@string/action_add_game_folder" />
     <item
+        android:id="@+id/add_game_folder_manual"
+        android:title="@string/action_add_game_folder_manual" />
+    <item
+        android:id="@+id/manage_game_folders"
+        android:title="@string/action_manage_game_folders" />
+    <item
         android:id="@+id/grant_storage_access"
         android:title="@string/action_grant_storage_access" />
-    <item
-        android:id="@+id/install_from_zip"
-        android:title="@string/action_install_from_zip" />
     <item
         android:id="@+id/help"
         android:title="@string/action_help" />

@@ -2,11 +2,24 @@
     <string name="app_name">xsystem4</string>
     <string name="action_refresh">Refresh</string>
     <string name="action_add_game_folder">Add Game Folder</string>
+    <string name="action_add_game_folder_manual">Enter Folder Path Manually</string>
+    <string name="action_manage_game_folders">Manage Custom Folders</string>
     <string name="action_grant_storage_access">Grant All Files Access</string>
     <string name="action_help">Help</string>
-    <string name="action_install_from_zip">Install from ZIP</string>
     <string name="action_licenses">Open source licenses</string>
     <string name="storage_access_already_granted">All files access is already granted.</string>
+    <string name="storage_permission_required">Storage access is required. Please grant \"All files access\" and try again.</string>
+    <string name="permission_required_message">xsystem4 needs storage access to scan /storage/emulated/0 and /storage/emulated/0/Download for games and to add game folders.\n\nTap the button below and allow \"All files access\", then return to this app.</string>
+    <string name="permission_button">Grant Storage Access</string>
+    <string name="permission_settings_unavailable">Could not open the storage permission settings.</string>
+    <string name="no_games">No games found yet.</string>
+    <string name="add_folder_plus">+</string>
+    <string name="add_folder_empty_button">+ Add Game Folder</string>
+    <string name="folder_picker_unavailable">No compatible folder picker was found on this device.</string>
+    <string name="folder_picker_invalid_path">Could not determine the physical path of the selected folder.</string>
+    <string name="folder_picker_not_found">The selected folder does not exist or cannot be read.</string>
+    <string name="folder_picker_no_game">No AliceStart.ini / System40.ini was found in \"%s\" or its direct subfolders.</string>
+    <string name="no_custom_folders">There are no custom folders to manage.</string>
     <string name="add_folder_dialog_title">Add Game Folder</string>
     <string name="add_folder_dialog_message">Enter a game folder (containing AliceStart.ini / System40.ini) or a parent folder containing game subfolders.</string>
     <string name="add_folder_hint">/storage/emulated/0/DohnaDohna</string>
@@ -21,29 +34,24 @@
     <string name="manage_folders_dialog_title">Custom Game Folders (uncheck to remove)</string>
     <string name="remove_custom_folder_message">Remove custom folder \"%s\" from the list? (Game files on disk will not be deleted.)</string>
     <string name="external_uninstall_notice">Games in %s are managed directly in storage. Use a file manager to delete them.</string>
-    <string name="choose_a_file">Choose a file</string>
     <string name="ok">OK</string>
     <string name="cancel">Cancel</string>
     <string name="error">Error</string>
-    <string name="install_dialog_title">Installing…</string>
-    <string name="install_progress">Extracting %s</string>
+    <string name="toast_ini_read_error">Failed to read \"%s\".</string>
     <string name="toast_no_GameName">%s has no \"GameName\" field.</string>
     <string name="toast_no_ini">There is neither \"System40.ini\" nor \"AliceStart.ini\" in %s.</string>
     <string name="uninstall_dialog_message">Uninstall \"%s\"?</string>
     <string name="uninstall_dialog_title">Confirm</string>
-    <string name="zip_extraction_error">Failed to extract ZIP.</string>
-    <string name="zip_no_ini">There is neither \"System40.ini\" nor \"AliceStart.ini\" in the ZIP archive.</string>
     <string name="usage">
         <![CDATA[
-            <h1>How to install a game</h1>
-            <p>1. Connect the device to your computer with a USB cable.</p>
-            <p>2. On the device, tap the &quot;Charging this device via USB&quot; notification.</p>
-            <p>3. Under &quot;Use USB for,&quot; select &quot;File Transfer&quot;.</p>
-            <p>4. A file transfer window will open on your computer.</p>
-            <p>5. Copy the game folder (e.g. &quot;Sengoku Rance&quot;) into
-                  <tt>Android/data/io.github.kichikuou.xsystem4/files/</tt>.</p>
-            <p>6. When you&apos;re done, disconnect the device from your computer.</p>
-            <p>7. Tap the menu button at the upper-right of this screen, and select &quot;Refresh&quot;.</p>
+            <h1>How to play</h1>
+            <p>Games are detected automatically in these folders:</p>
+            <p><tt>/storage/emulated/0/&lt;game&gt;</tt><br/>
+               <tt>/storage/emulated/0/Download/&lt;game&gt;</tt></p>
+            <p>Each game folder must contain <tt>System40.ini</tt> or <tt>AliceStart.ini</tt>.</p>
+            <p>If your game is stored somewhere else, tap the <b>+</b> button and choose the game folder
+               (or a parent folder containing game folders).</p>
+            <p>If the app asks for storage access, allow &quot;All files access&quot;.</p>
         ]]>
     </string>
 </resources>

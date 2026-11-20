@@ -39,24 +39,26 @@ static inline bool str_gbk(void)
 	return sys4_get_string_charset() == SYS4_CHARSET_GBK;
 }
 
-// Bytes of the character at p under the GBK rule, never more than remain.
-static inline int gbk_bytes(const uint8_t *p, int remain)
+// Bytes of the character at p under the active charset rule, never more than remain.
+// Works for both Shift-JIS (SJIS_2BYTE lead) and GBK (GBK_LEAD lead).
+static inline int str_char_bytes(const uint8_t *p, int remain)
 {
 	if (remain <= 0)
 		return 0;
-	return (remain >= 2 && GBK_LEAD(p[0])) ? 2 : 1;
+	bool lead = str_gbk() ? GBK_LEAD(p[0]) : SJIS_2BYTE(p[0]);
+	return (remain >= 2 && lead) ? 2 : 1;
 }
 
-static inline uint32_t gbk_code(const uint8_t *p, int n)
+static inline uint32_t str_char_code(const uint8_t *p, int n)
 {
 	return n == 2 ? ((uint32_t)p[0] << 8) | p[1] : p[0];
 }
 
-static bool gbk_set_has(const uint8_t *set, int set_len, uint32_t code)
+static bool str_set_has(const uint8_t *set, int set_len, uint32_t code)
 {
 	for (int i = 0; i < set_len; ) {
-		int n = gbk_bytes(set + i, set_len - i);
-		if (gbk_code(set + i, n) == code)
+		int n = str_char_bytes(set + i, set_len - i);
+		if (str_char_code(set + i, n) == code)
 			return true;
 		i += n;
 	}
@@ -64,9 +66,9 @@ static bool gbk_set_has(const uint8_t *set, int set_len, uint32_t code)
 }
 
 // Growable list of byte spans (offset, length) of a source string.
-struct gbk_spans { int nr, cap; int (*v)[2]; };
+struct str_spans { int nr, cap; int (*v)[2]; };
 
-static void gbk_spans_push(struct gbk_spans *sp, int off, int len)
+static void str_spans_push(struct str_spans *sp, int off, int len)
 {
 	if (sp->nr == sp->cap) {
 		sp->cap = sp->cap ? sp->cap * 2 : 8;
@@ -78,7 +80,7 @@ static void gbk_spans_push(struct gbk_spans *sp, int off, int len)
 }
 
 // array<string> page with one new string per span; frees the span list.
-static struct page *gbk_spans_to_page(const struct string *src, struct gbk_spans *sp)
+static struct page *str_spans_to_page(const struct string *src, struct str_spans *sp)
 {
 	struct page *result = alloc_page(ARRAY_PAGE, AIN_ARRAY_STRING, sp->nr);
 	result->array.rank = 1;
@@ -88,7 +90,7 @@ static struct page *gbk_spans_to_page(const struct string *src, struct gbk_spans
 		result->values[i].i = slot;
 	}
 	free(sp->v);
-	*sp = (struct gbk_spans){ 0 };
+	*sp = (struct str_spans){ 0 };
 	return result;
 }
 
@@ -160,35 +162,30 @@ static void String_PopBack(struct string **self)
 }
 
 // [7] void Erase(ref string self, int index, int length)
+// EXE 0x686b80/0x686c40: nothing for index < 0 or length == 0;
+// a negative or oversized length erases to the end.
+// mbcs_index() uses the active charset (SJIS or GBK), so both paths are correct.
 static void String_Erase(struct string **self, int index, int length)
 {
 	if (!self || !*self) return;
-	if (str_gbk()) {
-		// EXE 0x686b80/0x686c40: nothing for index < 0, index >= Length or
-		// length == 0; a negative or oversized length erases to the end.
-		struct string *s = *self;
-		if (index < 0 || length == 0)
-			return;
-		int b = mbcs_index(s->text, index);
-		if (b < 0)
-			return;
-		int e = s->size;
-		if (length > 0) {
-			int n = mbcs_index(s->text + b, length);
-			if (n >= 0)
-				e = b + n;
-		}
-		if (e <= b)
-			return;
-		struct string *r = make_string(s->text, b);
-		string_append_cstr(&r, s->text + e, s->size - e);
-		free_string(*self);
-		*self = r;
+	struct string *s = *self;
+	if (index < 0 || length == 0)
 		return;
+	int b = mbcs_index(s->text, index);
+	if (b < 0)
+		return;
+	int e = s->size;
+	if (length > 0) {
+		int n = mbcs_index(s->text + b, length);
+		if (n >= 0)
+			e = b + n;
 	}
-	for (int i = 0; i < length; i++) {
-		string_erase(self, index);
-	}
+	if (e <= b)
+		return;
+	struct string *r = make_string(s->text, b);
+	string_append_cstr(&r, s->text + e, s->size - e);
+	free_string(*self);
+	*self = r;
 }
 
 // [8] void Insert(ref string self, int index, string text)
@@ -219,29 +216,20 @@ static int String_Find(struct string **self, struct string *key)
 }
 
 // [10] int FindLast(ref string self, string key)
+// EXE 0x686ea0: compares at every character start and keeps the last hit.
+// Under SJIS an empty key returns -1 (guard below); under GBK an empty key
+// gives the index of the last character (the loop still runs but every
+// 0-byte memcmp trivially succeeds). str_char_bytes() handles both charsets.
 static int String_FindLast(struct string **self, struct string *key)
 {
 	struct string *s = SELF_STR(self);
-	if (str_gbk()) {
-		// EXE 0x686ea0: compares at every character start and keeps the last
-		// hit, so an empty key gives the index of the last character.
-		if (!s || !key) return -1;
-		int last = -1;
-		for (int i = 0, c = 0; i < s->size; i += gbk_bytes((uint8_t *)s->text + i, s->size - i), c++) {
-			if (i + key->size <= s->size && !memcmp(s->text + i, key->text, key->size))
-				last = c;
-		}
-		return last;
-	}
-	if (!s || !key || key->size == 0) return -1;
-
+	if (!s || !key) return -1;
+	if (!str_gbk() && key->size == 0) return -1;
 	int last = -1;
-	int c = 0;
-	for (int i = 0; i < s->size; i++, c++) {
+	for (int i = 0, c = 0; i < s->size; c++) {
 		if (i + key->size <= s->size && !memcmp(s->text + i, key->text, key->size))
 			last = c;
-		if (SJIS_2BYTE(s->text[i]))
-			i++;
+		i += str_char_bytes((uint8_t *)s->text + i, s->size - i);
 	}
 	return last;
 }
@@ -309,22 +297,27 @@ static void string_searchall_store(int ml_slot, struct page *flat)
 	}
 }
 
-// The same bracket tokenizer on GBK characters: '[' and ']' only count as
-// single-byte characters, never as the trail byte of a 2-byte character.
-static bool string_searchall_gbk(const struct string *s, int ml_slot)
+// The bracket tokenizer used by SearchAll/Search/Match.
+// '[' (0x5B) and ']' (0x5D) only count when n==1, so they are never matched
+// against the trail byte of a 2-byte Shift-JIS or GBK character.
+// str_char_bytes() selects the active charset rule.
+static bool String_SearchAll(struct string **self, int ml_slot, struct string *regex)
 {
+	struct string *s = SELF_STR(self);
+	if (!s || s->size == 0)
+		return false;
 	const uint8_t *t = (const uint8_t *)s->text;
 	int len = s->size;
-	struct gbk_spans spans = { 0 };
+	struct str_spans spans = { 0 };
 	for (int i = 0; i < len; ) {
-		int n = gbk_bytes(t + i, len - i), j;
+		int n = str_char_bytes(t + i, len - i), j;
 		if (n == 1 && t[i] == ']') {
 			i++;
 			continue;
 		}
 		if (n == 1 && t[i] == '[') {
 			for (j = i + 1; j < len; ) {
-				int m = gbk_bytes(t + j, len - j);
+				int m = str_char_bytes(t + j, len - j);
 				if (m == 1 && t[j] == ']')
 					break;
 				j += m;
@@ -333,96 +326,20 @@ static bool string_searchall_gbk(const struct string *s, int ml_slot)
 				j++;
 		} else {
 			for (j = i; j < len; ) {
-				int m = gbk_bytes(t + j, len - j);
+				int m = str_char_bytes(t + j, len - j);
 				if (m == 1 && (t[j] == '[' || t[j] == ']'))
 					break;
 				j += m;
 			}
 		}
-		gbk_spans_push(&spans, i, j - i);
+		str_spans_push(&spans, i, j - i);
 		i = j;
 	}
 	if (!spans.nr) {
 		free(spans.v);
 		return false;
 	}
-	string_searchall_store(ml_slot, gbk_spans_to_page(s, &spans));
-	return true;
-}
-
-static bool String_SearchAll(struct string **self, int ml_slot, struct string *regex)
-{
-	struct string *s = SELF_STR(self);
-	if (!s || s->size == 0)
-		return false;
-	if (str_gbk())
-		return string_searchall_gbk(s, ml_slot);
-
-	const char *text = s->text;
-	int len = s->size;
-
-	// Simple bracket tokenizer for the specific regex pattern used by the game
-	int count = 0;
-	int i = 0;
-	while (i < len) {
-		if (text[i] == '[') {
-			int j = i + 1;
-			while (j < len && text[j] != ']')
-				j++;
-			if (j < len) j++;
-			count++;
-			i = j;
-		} else if (text[i] != ']') {
-			int j = i;
-			while (j < len && text[j] != '[' && text[j] != ']')
-				j++;
-			if (j > i) count++;
-			i = j;
-		} else {
-			i++;
-		}
-	}
-
-	if (count == 0)
-		return false;
-
-	// Build flat array<string> of tokens (matches AIN signature: wrap<array<string>>)
-	struct page *flat = alloc_page(ARRAY_PAGE, AIN_ARRAY_STRING, count);
-	flat->array.rank = 1;
-
-	int idx = 0;
-	i = 0;
-	while (i < len && idx < count) {
-		int start = i;
-		int end = i;
-
-		if (text[i] == '[') {
-			int j = i + 1;
-			while (j < len && text[j] != ']')
-				j++;
-			if (j < len) j++;
-			end = j;
-			i = j;
-		} else if (text[i] != ']') {
-			int j = i;
-			while (j < len && text[j] != '[' && text[j] != ']')
-				j++;
-			end = j;
-			i = j;
-		} else {
-			i++;
-			continue;
-		}
-
-		if (end > start) {
-			struct string *token = make_string(text + start, end - start);
-			flat->values[idx].i = heap_alloc_string(token);
-			idx++;
-		}
-	}
-
-	// Write flat array back to ml_slot.
-	string_searchall_store(ml_slot, flat);
+	string_searchall_store(ml_slot, str_spans_to_page(s, &spans));
 	return true;
 }
 
@@ -434,13 +351,17 @@ static bool String_Match(struct string **self, int ml_slot, struct string *regex
 }
 
 // [19] string Replace(ref string self, string key, string replacer)
-// EXE 0x687df0 (dispatcher case 0x684525): compares key at character starts,
-// emits replacer and skips the key's bytes on a hit, else copies one
-// character; the result is returned and self is left untouched.
-static struct string *string_replace_gbk(struct string *s, struct string *from, struct string *to)
+// EXE 0x687df0: compares key at character starts (never at the trail byte of a
+// 2-byte char), emits replacer on a hit, copies one character otherwise.
+// The result is a new string; *self is NOT mutated in-place.
+// str_char_bytes() handles both Shift-JIS and GBK correctly.
+static struct string *String_Replace(struct string **self, struct string *from, struct string *to)
 {
+	struct string *s = SELF_STR(self);
+	if (!s)
+		return string_ref(&EMPTY_STRING);
 	if (!from || from->size == 0)
-		return string_ref(s); // the EXE loops forever on an empty key
+		return string_ref(s); // EXE loops forever on empty key — treat as no-op
 	const uint8_t *t = (const uint8_t *)s->text;
 	int len = s->size;
 	struct string *out = NULL;
@@ -452,57 +373,13 @@ static struct string *string_replace_gbk(struct string *s, struct string *from, 
 				string_append(&out, to);
 			i += from->size;
 		} else {
-			int n = gbk_bytes(t + i, len - i);
+			int n = str_char_bytes(t + i, len - i);
 			if (out)
 				string_append_cstr(&out, s->text + i, n);
 			i += n;
 		}
 	}
 	return out ? out : string_ref(s);
-}
-
-static struct string *String_Replace(struct string **self, struct string *from, struct string *to)
-{
-	struct string *s = SELF_STR(self);
-	if (str_gbk())
-		return s ? string_replace_gbk(s, from, to) : string_ref(&EMPTY_STRING);
-	if (!s || !from || from->size == 0)
-		return s ? string_ref(s) : string_ref(&EMPTY_STRING);
-
-	const char *text = s->text;
-	int text_len = s->size;
-	const char *from_str = from->text;
-	int from_len = from->size;
-	const char *to_str = to ? to->text : "";
-	int to_len = to ? to->size : 0;
-
-	int count = 0;
-	for (int i = 0; i <= text_len - from_len; i++) {
-		if (memcmp(text + i, from_str, from_len) == 0) {
-			count++;
-			i += from_len - 1;
-		}
-	}
-	if (count == 0)
-		return string_ref(s);
-
-	int new_len = text_len + count * (to_len - from_len);
-	struct string *result = string_alloc(new_len);
-	char *dst = result->text;
-	for (int i = 0; i < text_len; ) {
-		if (i <= text_len - from_len && memcmp(text + i, from_str, from_len) == 0) {
-			memcpy(dst, to_str, to_len);
-			dst += to_len;
-			i += from_len;
-		} else {
-			*dst++ = text[i++];
-		}
-	}
-	*dst = '\0';
-
-	free_string(*self);
-	*self = string_ref(result);
-	return result;
 }
 
 // [20] string ReplaceRegex(ref string self, string regex, string replacer) — stub
@@ -787,37 +664,13 @@ static struct string *String_ToUpper(struct string **self)
 }
 
 /*
- * Split under the GBK rule, EXE 0x6892f0 (set 0x6862a0, scan 0x686440):
- * separators is a set of characters; containsMode bit 0 adds each separator
- * as its own piece, bit 1 keeps empty pieces; a separator at the very end
- * does not produce a trailing piece.
+ * Split, EXE 0x6892f0 (set 0x6862a0, scan 0x686440):
+ * separators is a set of characters (1 or 2 bytes each under the active charset).
+ * containsMode bit 0 adds each separator as its own piece;
+ * bit 1 keeps empty pieces; a separator at the very end does not produce a
+ * trailing empty piece.
+ * str_char_bytes() / str_char_code() / str_set_has() work for both SJIS and GBK.
  */
-static struct page *string_split_gbk(const struct string *str, const struct string *separators, int mode)
-{
-	const uint8_t *t = (const uint8_t *)str->text;
-	const uint8_t *set = (const uint8_t *)separators->text;
-	int len = str->size;
-	struct gbk_spans spans = { 0 };
-	for (int p = 0; p < len; ) {
-		int q = p, n = 0;
-		while (q < len) {
-			n = gbk_bytes(t + q, len - q);
-			if (gbk_set_has(set, separators->size, gbk_code(t + q, n)))
-				break;
-			q += n;
-		}
-		if (q > p)
-			gbk_spans_push(&spans, p, q - p);
-		else if (mode & 2)
-			gbk_spans_push(&spans, p, 0);
-		if (q >= len)
-			break;
-		if (mode & 1)
-			gbk_spans_push(&spans, q, n);
-		p = q + n;
-	}
-	return gbk_spans_to_page(str, &spans);
-}
 
 // [35] array<string> Split(ref string self, string separators, int containsMode)
 static int String_Split(struct string **self, struct string *separators, int containsMode)
@@ -837,48 +690,30 @@ static int String_Split(struct string **self, struct string *separators, int con
 		return slot;
 	}
 
-	if (str_gbk()) {
-		int slot = heap_alloc_slot(VM_PAGE);
-		heap_set_page(slot, string_split_gbk(str, separators, containsMode));
-		return slot;
-	}
-
-	const char *text = str->text;
+	const uint8_t *t = (const uint8_t *)str->text;
+	const uint8_t *set = (const uint8_t *)separators->text;
 	int len = str->size;
-	const char *seps = separators->text;
-	int sep_len = separators->size;
-
-	int count = 1;
-	for (int i = 0; i < len; i++) {
-		for (int j = 0; j < sep_len; j++) {
-			if (text[i] == seps[j]) { count++; break; }
+	struct str_spans spans = { 0 };
+	for (int p = 0; p < len; ) {
+		int q = p, n = 0;
+		while (q < len) {
+			n = str_char_bytes(t + q, len - q);
+			if (str_set_has(set, separators->size, str_char_code(t + q, n)))
+				break;
+			q += n;
 		}
+		if (q > p)
+			str_spans_push(&spans, p, q - p);
+		else if (containsMode & 2)
+			str_spans_push(&spans, p, 0);
+		if (q >= len)
+			break;
+		if (containsMode & 1)
+			str_spans_push(&spans, q, n);
+		p = q + n;
 	}
-
-	struct page *result = alloc_page(ARRAY_PAGE, AIN_ARRAY_STRING, count);
-	result->array.rank = 1;
-
-	int idx = 0;
-	int start = 0;
-	for (int i = 0; i <= len; i++) {
-		bool is_sep = false;
-		if (i < len) {
-			for (int j = 0; j < sep_len; j++) {
-				if (text[i] == seps[j]) { is_sep = true; break; }
-			}
-		}
-		if (is_sep || i == len) {
-			struct string *piece = make_string(text + start, i - start);
-			int str_slot = heap_alloc_slot(VM_STRING);
-			heap[str_slot].s = piece;
-			result->values[idx].i = str_slot;
-			idx++;
-			start = i + 1;
-		}
-	}
-
 	int slot = heap_alloc_slot(VM_PAGE);
-	heap_set_page(slot, result);
+	heap_set_page(slot, str_spans_to_page(str, &spans));
 	return slot;
 }
 
