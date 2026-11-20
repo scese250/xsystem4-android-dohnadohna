@@ -900,7 +900,7 @@ static bool SystemService_GetHideMouseCursorByGame(void) { return false; }
 static bool SystemService_GetUsePower2Texture(void) { return false; }
 static bool SystemService_RunProgram(struct string *prog) { return false; }
 static bool SystemService_IsOpenedMutex(struct string *name) { return false; }
-static bool SystemService_PopSystemMessage(void) { return false; }
+static bool SystemService_PopSystemMessage(possibly_unused int *message) { return false; }
 static int SystemService_GetDefaultViewWidth(void) { return config.view_width; }
 static int SystemService_GetDefaultViewHeight(void) { return config.view_height; }
 static int SystemService_GetWindowPosX(void) { return 0; }
@@ -920,7 +920,7 @@ static void SystemService_SetResizableUserControl(int ctrl) { }
 static bool SystemService_IsHookCloseApp(void) { return false; }
 static void SystemService_BackupSaveFile(void) { }
 static bool SystemService_EnableSystemPopup(void) { return true; }
-static void SystemService_PopSystemMessageString(struct string *msg) { }
+static bool SystemService_PopSystemMessageString(possibly_unused int msg_slot) { return false; }
 static void SystemService_RenderToSurfaceImage(int surface) { }
 static void SystemService_RenderToSurfaceImageByScale(int surface, float scale) { }
 static bool SystemService_SaveScreenshot(struct string *path, int x, int y, int w, int h) { return false; }

@@ -158,24 +158,32 @@ void parts_checkbox_set_string(struct parts *parts, char **field, const char *va
 }
 
 /*
- * The CG of the box in a state (0 普通, 1 オン, 2 ダウン, 3 無効), "" when the
- * box has none. 0x529c40 .. 0x529d60 for a box that is not checked: nothing
+ * The CG of the box in a state (0 通常/普通, 1 オン, 2 ダウン, 3 無効), "" when
+ * the box has none. 0x529c40 .. 0x529d60 for a box that is not checked: nothing
  * without a ＣＧ名, whatever 覆蓋ＣＧ名 says; else 覆蓋ＣＧ名, or ＣＧ名 when
  * that is empty, and the state's suffix. 0x529dc0 .. 0x52a150 for a checked
- * one: nothing without a ＣＧ名; else 覆蓋檢查ＣＧ名, or ＣＧ名 with ／檢查
- * when that is empty, and the suffix. The suffixes are the GBK strings of
- * the CN executable (0x7d863c ..); an SJIS release's ／檢查 is not known, and
- * neither are its pactex keys, so a box is only ever named by a GBK pactex.
+ * one: nothing without a ＣＧ名; else 覆蓋檢查ＣＧ名, or ＣＧ名 with
+ * ／チェック (SJIS) / ／檢查 (GBK) when that is empty, and the suffix.
  */
 static void checkbox_cg_name(const struct parts_checkbox *cb, bool checked, int state,
 		char *out, size_t size)
 {
-	static const char *const suffix[] = {
+	static const char *const gbk_suffix[] = {
 		"\xa3\xaf\xc6\xd5\xcd\xa8",         // ／普通
 		"\xa3\xaf\xa5\xaa\xa5\xf3",         // ／オン
 		"\xa3\xaf\xa5\xc0\xa5\xa6\xa5\xf3", // ／ダウン
 		"\xa3\xaf\x9f\x6f\x84\xbf",         // ／無効
 	};
+	static const char *const sjis_suffix[] = {
+		"\x81\x5e\x92\xca\x8f\xed",         // ／通常
+		"\x81\x5e\x83\x49\x83\x93",         // ／オン
+		"\x81\x5e\x83\x5f\x83\x45\x83\x93", // ／ダウン
+		"\x81\x5e\x96\xb3\x8c\xf8",         // ／無効
+	};
+	const bool gbk = game_charset_is_gbk();
+	const char *const *suffix = gbk ? gbk_suffix : sjis_suffix;
+	const char *checked_suffix = gbk ? "\xa3\xaf\x99\x7a\xb2\xe9"         // ／檢查
+	                                 : "\x81\x5e\x83\x60\x83\x46\x83\x62\x83\x4e"; // ／チェック
 	out[0] = '\0';
 	if (!cb->cg_name)
 		return;
@@ -185,7 +193,7 @@ static void checkbox_cg_name(const struct parts_checkbox *cb, bool checked, int 
 	else if (cb->over_checked_cg_name)
 		snprintf(out, size, "%s%s", cb->over_checked_cg_name, suffix[state]);
 	else
-		snprintf(out, size, "%s\xa3\xaf\x99\x7a\xb2\xe9%s", cb->cg_name, suffix[state]); // ／檢查
+		snprintf(out, size, "%s%s%s", cb->cg_name, checked_suffix, suffix[state]);
 }
 
 static struct text_style widget_text_style(const struct parts_widget_font *font, int char_space)

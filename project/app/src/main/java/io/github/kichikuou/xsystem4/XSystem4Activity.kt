@@ -1,8 +1,10 @@
 package io.github.kichikuou.xsystem4
 
+import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.Process
+import android.view.WindowManager
 import org.libsdl.app.SDLActivity
 import java.io.File
 
@@ -20,6 +22,10 @@ class XSystem4Activity : SDLActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
         if (!SDLActivity.mBrokenLibraries) {
             SDLActivity.nativeSetenv("SDL_ANDROID_TRAP_BACK_BUTTON", "1")
         }

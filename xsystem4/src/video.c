@@ -300,7 +300,11 @@ static void main_surface_init(int w, int h)
 
 	glGenTextures(1, &main_surface.handle);
 	glBindTexture(GL_TEXTURE_2D, main_surface.handle);
+#ifdef USE_GLES
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+#else
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, w, h, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+#endif
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 	glBindTexture(GL_TEXTURE_2D, 0);
@@ -308,7 +312,8 @@ static void main_surface_init(int w, int h)
 	main_surface.w = w;
 	main_surface.h = h;
 
-	glGenFramebuffers(1, &main_surface_fb);
+	if (!main_surface_fb)
+		glGenFramebuffers(1, &main_surface_fb);
 	glBindFramebuffer(GL_FRAMEBUFFER, main_surface_fb);
 	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, main_surface.handle, 0);
 }
@@ -790,11 +795,15 @@ void gfx_init_texture_rgb(struct texture *t, int w, int h, SDL_Color color)
 		h = max_texture_size;
 	}
 	init_texture(t, w, h);
+#ifdef USE_GLES
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+#else
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, w, h, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+#endif
 	if (w <= 0 || h <= 0)
 		return;
 	GLuint fbo = gfx_set_framebuffer(GL_DRAW_FRAMEBUFFER, t, 0, 0, w, h);
-	glClearColor(color.r / 255.f, color.g / 255.f, color.b / 255.f, 255.f);
+	glClearColor(color.r / 255.f, color.g / 255.f, color.b / 255.f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT);
 	gfx_reset_framebuffer(GL_DRAW_FRAMEBUFFER, fbo);
 }
@@ -825,7 +834,11 @@ void gfx_init_texture_blank(struct texture *t, int w, int h)
 void gfx_copy_main_surface(struct texture *dst)
 {
 	init_texture(dst, main_surface.w, main_surface.h);
+#ifdef USE_GLES
+	glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 0, 0, main_surface.w, main_surface.h, 0);
+#else
 	glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 0, 0, main_surface.w, main_surface.h, 0);
+#endif
 }
 
 void gfx_delete_texture(struct texture *t)

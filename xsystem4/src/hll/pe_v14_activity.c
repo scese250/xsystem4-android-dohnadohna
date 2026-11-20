@@ -191,15 +191,16 @@ static const char SJIS_CG_MEI[]      = "\x82\x62\x82\x66\x96\xbc";             /
 static const char SJIS_SIZE[]        = "\x83\x54\x83\x43\x83\x59";             /* サイズ (size) */
 static const char SJIS_COLOR[]       = "\x90\x46";                             /* 色 (color) */
 static const char SJIS_PANEL[]       = "\x83\x70\x83\x6c\x83\x8b";             /* パネル (panel) */
+static const char SJIS_LOW_LEVEL[]   = "\x92\xe1\x83\x8c\x83\x78\x83\x8b\x83\x70\x81\x5b\x83\x63"; /* 低レベルパーツ */
 static const char SJIS_MULTI_LEVEL[] = "\x83\x7d\x83\x8b\x83\x60\x83\x8c\x83\x78\x83\x8b\x83\x70\x81\x5b\x83\x63"; /* マルチレベルパーツ */
 static const char SJIS_SCALE[]       = "\x8a\x67\x91\xe5\x8f\x6b\x8f\xac"; /* 拡大縮小 (scale) */
 static const char SJIS_ROTATION[]    = "\x89\xf1\x93\x5d";                 /* 回転 (rotation) */
 static const char SJIS_BUTTON[]      = "\x83\x7b\x83\x5e\x83\x93";         /* ボタン (button) */
 static const char SJIS_BUTTON_COLOR[]= "\x83\x7b\x83\x5e\x83\x93\x82\xcc\x90\x46"; /* ボタンの色 (button color) */
-static const char SJIS_FONT_TYPE[]   = "\x83\x74\x83\x48\x83\x93\x83\x67\x8e\xed\x97\xde"; /* フォント種類 (font type) */
-static const char SJIS_FONT_SIZE[]   = "\x83\x74\x83\x48\x83\x93\x83\x67\x83\x54\x83\x43\x83\x59"; /* フォントサイズ (font size) */
-static const char SJIS_FONT_COLOR[]  = "\x83\x74\x83\x48\x83\x93\x83\x67\x90\x46"; /* フォント色 (font color) */
-static const char SJIS_FONT_EDGE_COLOR[] = "\x83\x74\x83\x48\x83\x93\x83\x67\x83\x47\x83\x62\x83\x57\x90\x46"; /* フォントエッジ色 (font edge color) */
+/* static const char SJIS_FONT_TYPE[]   = "\x83\x74\x83\x48\x83\x93\x83\x67\x8e\xed\x97\xde"; */ /* フォント種類 (unused) */
+/* static const char SJIS_FONT_SIZE[]   = "\x83\x74\x83\x48\x83\x93\x83\x67\x83\x54\x83\x43\x83\x59"; */ /* フォントサイズ (unused) */
+/* static const char SJIS_FONT_COLOR[]  = "\x83\x74\x83\x48\x83\x93\x83\x67\x90\x46"; */ /* フォント色 (unused) */
+/* static const char SJIS_FONT_EDGE_COLOR[] = "\x83\x74\x83\x48\x83\x93\x83\x67\x83\x47\x83\x62\x83\x57\x90\x46"; */ /* フォントエッジ色 (unused) */
 static const char SJIS_SURFACE_AREA[] = "\x83\x54\x81\x5b\x83\x74\x83\x46\x83\x43\x83\x58\x83\x47\x83\x8a\x83\x41"; /* サーフェイスエリア (surface area) */
 static const char SJIS_DRAW_FILTER[]  = "\x95\x60\x89\xe6\x83\x74\x83\x42\x83\x8b\x83\x5e"; /* 描画フィルタ (draw filter) */
 static const char SJIS_ADD_COLOR[]    = "\x89\xc1\x8e\x5a\x90\x46"; /* 加算色 (add color) */
@@ -231,7 +232,7 @@ static const char GBK_ALPHA_GRADATION[] = "\xa5\xa2\xa5\xeb\xa5\xd5\xa5\xa1\xa5\
 static const char GBK_BUTTON[]      = "\xa5\xdc\xa5\xbf\xa5\xf3"; /* ボタン (GBK katakana) */
 static const char GBK_CN_BUTTON[]   = "\xb0\xb4\xe2\x6f";         /* 按鈕 (GBK Chinese) */
 static const char GBK_SURFACE_AREA[] = "\xa5\xb5\xa1\xbc\xa5\xd5\xa5\xa7\xa5\xa4\xa5\xb9\xa5\xa8\xa5\xea\xa5\xa2"; /* サーフェイスエリア (GBK) */
-static const char GBK_CN_PANEL[]    = "\xb5\xcd\xb5\xc8\xbc\x89"; /* 低等級 (GBK CN panel type) */
+/* static const char GBK_CN_PANEL[]    = "\xb5\xcd\xb5\xc8\xbc\x89"; */ /* 低等級 (GBK CN panel type) — unused */
 static const char GBK_SCALE[]       = "\x92\x88\xb4\xf3\xbf\x73\xd0\xa1"; /* 拡大縮小 (GBK) */
 static const char GBK_ROTATION[]    = "\xd0\xfd\xde\x44"; /* 回転 (GBK) */
 static const char GBK_MUL_COLOR[]   = "\x81\x5c\xcb\xe3\xc9\xab"; /* 乗算色 (GBK) */
@@ -330,6 +331,71 @@ static bool pactex_find_int(struct ex_tree *node, const char *name, int *v)
 	return false;
 }
 
+static bool pactex_name_is(struct ex_tree *node, const char *sjis, const char *gbk)
+{
+	return node->name && ((sjis && !strcmp(node->name->text, sjis)) ||
+	                      (gbk  && !strcmp(node->name->text, gbk)));
+}
+
+/* The value of the leaf named sjis or gbk among node's children. */
+static struct ex_value *pactex_dual_value(struct ex_tree *node, const char *sjis, const char *gbk)
+{
+	if (!node || node->is_leaf) return NULL;
+	for (unsigned i = 0; i < node->nr_children; i++) {
+		struct ex_tree *c = &node->children[i];
+		if (c->is_leaf && pactex_name_is(c, sjis, gbk))
+			return &c->leaf.value;
+	}
+	return NULL;
+}
+
+static struct ex_value *pactex_leaf_value(struct ex_tree *node, const char *sjis, const char *gbk)
+{
+	return pactex_dual_value(node, sjis, gbk);
+}
+
+static float pactex_value_number(const struct ex_value *v, float fallback)
+{
+	if (v && v->type == EX_FLOAT) return v->f;
+	if (v && v->type == EX_INT) return v->i;
+	return fallback;
+}
+
+static int pactex_dual_int(struct ex_tree *node, const char *sjis, const char *gbk, int fallback)
+{
+	struct ex_value *v = pactex_dual_value(node, sjis, gbk);
+	if (!v || v->type != EX_INT)
+		return fallback;
+	return v->i;
+}
+
+static int pactex_dual_item(struct ex_tree *node, const char *sjis, const char *gbk,
+		unsigned index, int fallback)
+{
+	struct ex_value *v = pactex_dual_value(node, sjis, gbk);
+	if (!v || v->type != EX_LIST || !v->list || index >= v->list->nr_items)
+		return fallback;
+	return pactex_value_number(&v->list->items[index].value, fallback);
+}
+
+static const char *pactex_dual_string(struct ex_tree *node, const char *sjis, const char *gbk)
+{
+	struct ex_value *v = pactex_dual_value(node, sjis, gbk);
+	return v && v->type == EX_STRING && v->s ? v->s->text : "";
+}
+
+static const char *pactex_dual_opt_string(struct ex_tree *node, const char *sjis, const char *gbk)
+{
+	struct ex_value *v = pactex_dual_value(node, sjis, gbk);
+	return v && v->type == EX_STRING && v->s && v->s->text[0] ? v->s->text : NULL;
+}
+
+static struct ex_list *pactex_dual_list(struct ex_tree *node, const char *sjis, const char *gbk)
+{
+	struct ex_value *v = pactex_dual_value(node, sjis, gbk);
+	return v && v->type == EX_LIST ? v->list : NULL;
+}
+
 static void pactex_apply_pixel_decide(struct ex_tree *node, int parts_no)
 {
 	int enabled = pactex_get_int(node, SJIS_PIXEL_DECIDE, -1);
@@ -338,75 +404,41 @@ static void pactex_apply_pixel_decide(struct ex_tree *node, int parts_no)
 	PE_SetPartsPixelDecide(parts_no, enabled != 0);
 }
 
-/* オン指針透過 (on-cursor pass-through), a field of the component like the
- * pixel decision above: the native parser (0x553650, called with the block
- * at parts +0x84) reads it at 0x5547f4 as "== 1" into block +0x121, i.e.
- * parts +0x1a5, the flag SetPassCursor (0x58f700) writes and the input
- * target predicate (0x546e20) reads. A decoration marked 1 (407 components,
- * e.g. the title characters and every text and number of WorkerParamView)
- * blocks neither the hover nor the click of the parts behind it. Only the CN
- * spelling is known; a missing key is 0, as the parser's default. */
+/* オンカーソル透過 / オン指針透過 (on-cursor pass-through). */
+static const char SJIS_PASS_CURSOR[]   = "\x83\x49\x83\x93\x83\x4a\x81\x5b\x83\x5c\x83\x8b\x93\xa7\x89\xdf"; /* オンカーソル透過 */
 static const char GBK_CN_PASS_CURSOR[] = "\xa5\xaa\xa5\xf3\xd6\xb8\xe1\x98\xcd\xb8\xdf\x5e"; /* オン指針透過 */
 
 static void pactex_apply_pass_cursor(struct ex_tree *node, int parts_no)
 {
-	PE_SetPassCursor(parts_no, pactex_get_int(node, GBK_CN_PASS_CURSOR, 0) == 1);
+	PE_SetPassCursor(parts_no, pactex_dual_int(node, SJIS_PASS_CURSOR, GBK_CN_PASS_CURSOR, 0) == 1);
 }
 
-/* Native 0x5549cf: the component's own wheel flag is true only for the
- * integer 1 (default 0). These are the verified CN key bytes; no SJIS
- * spelling is inferred here. */
+/* ホイール有効 (SJIS + GBK). */
+static const char SJIS_WHEELABLE[]   = "\x83\x7a\x83\x43\x81\x5b\x83\x8b\x97\x4c\x8c\xf8"; /* ホイール有効 */
 static const char GBK_CN_WHEELABLE[] = "\xa5\xdb\xa5\xa4\xa9\x60\xa5\xeb\xd3\xd0\x84\xbf";
 
 static void pactex_apply_wheelable(struct ex_tree *node, int parts_no)
 {
 	if (ain->version >= 14)
-		parts_get(parts_no)->wheelable = pactex_get_int(node, GBK_CN_WHEELABLE, 0) == 1;
+		parts_get(parts_no)->wheelable = pactex_dual_int(node, SJIS_WHEELABLE, GBK_CN_WHEELABLE, 0) == 1;
 }
 
-/* スピードアップ有効 (speed-up enabled), the last field the same parser reads:
- * 0x554b75 gets it with the default 1 and stores "== 1" at block +0x1a9
- * (0x554ba5), i.e. parts +0x22d, the flag SetEnableSpeedUp (0x5909f0) writes.
- * A parts with it takes the scaled passed time in its update (0x5352b1).
- * 2691 components of the game are 1 and 15 are 0; all message windows are 1.
- * Only the CN spelling is known. */
+/* スピードアップ有効 (speed-up enabled, default 1). */
+static const char SJIS_SPEED_UP[]   = "\x83\x58\x83\x73\x81\x5b\x83\x68\x83\x41\x83\x62\x83\x76\x97\x4c\x8c\xf8"; /* スピードアップ有効 */
 static const char GBK_CN_SPEED_UP[] = "\xa5\xb9\xa5\xd4\xa9\x60\xa5\xc9\xa5\xa2\xa5\xc3\xa5\xd7\xd3\xd0\x84\xbf"; /* スピードアップ有効 */
 
 static void pactex_apply_speed_up(struct ex_tree *node, int parts_no)
 {
-	PE_SetEnableSpeedUp(parts_no, pactex_get_int(node, GBK_CN_SPEED_UP, 1) == 1);
+	PE_SetEnableSpeedUp(parts_no, pactex_dual_int(node, SJIS_SPEED_UP, GBK_CN_SPEED_UP, 1) == 1);
 }
 
-/* 點擊許可 (click permission), the field the same parser reads just before
- * オン指針透過: 0x5547be gets it with the default 0 and stores "== 1" at block
- * +0x120 (0x5547e9), i.e. parts +0x1a4, the flag Parts_SetClickable
- * (0x58f830) writes and both the input target predicate (0x546e20) and the
- * release handler (0x5788d0: only a clickable element gets the MouseClick)
- * read. Every component of the game has the key and 38 are 1. The 29 of
- * them that are neither buttons nor ＣＧ判定部件 (the ClickTarget, ClickGuard
- * and InputGuard rects, DungeonSelector's Area, the CG mode's side panels)
- * never got a click: the script registers its events on them, or nothing
- * for the guards, and relies on this flag.
- *
- * The native store is unconditional and the field starts as 0 (0x550a2f).
- * Here only a 1 is applied. A parts the loader has just allocated is not
- * clickable either, so the result is the same (numbers are not reused
- * within a process; after loading a save made by another process the loader
- * can be handed a restored parts, which is not handled here). And this flag
- * also stands in for the inner parts of a button widget, which the widget
- * makes clickable itself (0x528690) whatever its component says (190 of the
- * 192 buttons are 0). Only the CN spelling is known, not the key's SJIS
- * name.
- *
- * A marked parts the script never gives an event (ClickGuard, InputGuard,
- * PartySkillView's Button) gets its MouseClick as in the original, which
- * the AIN drops (CPartsMessageManager@CallDelegate); the whole-screen click
- * of the same release is sent in any case (parts/input.c). */
+/* クリック許可 / 點擊許可 (click permission). */
+static const char SJIS_CLICK_PERMISSION[]   = "\x83\x4e\x83\x8a\x83\x62\x83\x4e\x8b\x96\x89\xc2"; /* クリック許可 */
 static const char GBK_CN_CLICK_PERMISSION[] = "\xfc\x63\x93\xf4\xd4\x53\xbf\xc9"; /* 點擊許可 */
 
 static void pactex_apply_click_permission(struct ex_tree *node, int parts_no)
 {
-	if (pactex_get_int(node, GBK_CN_CLICK_PERMISSION, 0) == 1)
+	if (pactex_dual_int(node, SJIS_CLICK_PERMISSION, GBK_CN_CLICK_PERMISSION, 0) == 1)
 		PE_SetClickable(parts_no, true);
 }
 
@@ -500,7 +532,9 @@ static bool pactex_get_surface_area(struct ex_tree *branch, int *x, int *y, int 
 	for (unsigned i = 0; i < branch->nr_children; i++) {
 		struct ex_tree *c = &branch->children[i];
 		if (!c->is_leaf || !c->name) continue;
-		if (strstr(c->name->text, SJIS_SURFACE_AREA) &&
+		if ((strstr(c->name->text, SJIS_SURFACE_AREA) ||
+		     strstr(c->name->text, GBK_SURFACE_AREA) ||
+		     strstr(c->name->text, "\xa5\xb5\xa9\x60\xa5\xd5\xa5\xa7\xa5\xa4\xa5\xb9\xa5\xa8\xa5\xea\xa5\xa2")) &&
 		    c->leaf.value.type == EX_LIST && c->leaf.value.list &&
 		    c->leaf.value.list->nr_items >= 4) {
 			struct ex_list *sa = c->leaf.value.list;
@@ -644,40 +678,11 @@ static bool pactex_apply_message_window(struct ex_tree *type_info, const char *p
 	return true;
 }
 
-/* Native low-level parts (outer type 18) select their three states by name,
- * then construct a CG (19) or text (21) even if its content is empty.
- * See native 0x5b8bc0, 0x533d80 and 0x4df5b0. Unknown types keep the legacy
- * loader/getter behavior; an arbitrary PARTS_TEXT state is not a text widget. */
-static bool pactex_name_is(struct ex_tree *node, const char *sjis, const char *gbk)
-{
-	return node->name && (!strcmp(node->name->text, sjis) || !strcmp(node->name->text, gbk));
-}
-
-/* The value of the leaf named sjis or gbk among node's children. */
-static struct ex_value *pactex_leaf_value(struct ex_tree *node, const char *sjis, const char *gbk)
-{
-	if (!node || node->is_leaf) return NULL;
-	for (unsigned i = 0; i < node->nr_children; i++) {
-		struct ex_tree *c = &node->children[i];
-		if (c->is_leaf && pactex_name_is(c, sjis, gbk))
-			return &c->leaf.value;
-	}
-	return NULL;
-}
-
-static float pactex_value_number(const struct ex_value *v, float fallback)
-{
-	if (v && v->type == EX_FLOAT) return v->f;
-	if (v && v->type == EX_INT) return v->i;
-	return fallback;
-}
-
 /* キー待ちマーク of a message window (props::Load, 0x4f0821 to 0x4f0c5a): the
- * block's ＣＧ名 and フラット名 as they are, 循環ＣＧ開始番號, 循環ＣＧ枚數,
- * 循環ＣＧ切換時間 and the three items of 座標, each 0 when missing; without
+ * block's ＣＧ名 and フラット名 as they are, ループＣＧ開始番号, ループＣＧ枚数,
+ * ループＣＧ切り替え時間 and the three items of 座標, each 0 when missing; without
  * the block the mark is the default one (no names, all 0, 0x4ee460). A loaded
- * mark is hidden. The names of the three numbers are the GBK release's; the
- * SJIS ones are those characters in SJIS, a guess (no SJIS pactex was read). */
+ * mark is hidden. */
 static void pactex_apply_key_wait(struct ex_tree *type_info, int parts_no)
 {
 	struct ex_tree *block = NULL;
@@ -690,10 +695,10 @@ static void pactex_apply_key_wait(struct ex_tree *type_info, int parts_no)
 				block = c;
 		}
 	}
-	struct ex_value *cg = pactex_leaf_value(block, "\x82\x62\x82\x66\x96\xbc", "\xa3\xc3\xa3\xc7\xc3\xfb");
-	struct ex_value *flat = pactex_leaf_value(block,
+	struct ex_value *cg = pactex_dual_value(block, "\x82\x62\x82\x66\x96\xbc", "\xa3\xc3\xa3\xc7\xc3\xfb");
+	struct ex_value *flat = pactex_dual_value(block,
 			"\x83\x74\x83\x89\x83\x62\x83\x67\x96\xbc", "\xa5\xd5\xa5\xe9\xa5\xc3\xa5\xc8\xc3\xfb");
-	struct ex_value *pos = pactex_leaf_value(block, "\x8d\xc0\x95\x57", "\xd7\xf9\x98\xcb");
+	struct ex_value *pos = pactex_dual_value(block, "\x8d\xc0\x95\x57", "\xd7\xf9\x98\xcb");
 	int xyz[3] = {0, 0, 0};
 	if (pos && pos->type == EX_LIST && pos->list) {
 		for (unsigned i = 0; i < 3 && i < pos->list->nr_items; i++)
@@ -701,14 +706,14 @@ static void pactex_apply_key_wait(struct ex_tree *type_info, int parts_no)
 	}
 	struct string *name = cstr_to_string(cg && cg->type == EX_STRING && cg->s ? cg->s->text : "");
 	PE_SetKeyWaitCGName(parts_no, name,
-		pactex_value_number(pactex_leaf_value(block,
-			"\x8f\x7a\x8a\xc2\x82\x62\x82\x66\x8a\x4a\x8e\x6e\x94\xd4\xe5\x6a",
+		pactex_value_number(pactex_dual_value(block,
+			"\x83\x8b\x81\x5b\x83\x76\x82\x62\x82\x66\x8a\x4a\x8e\x6e\x94\xd4\x8d\x86",
 			"\xd1\xad\xad\x68\xa3\xc3\xa3\xc7\xe9\x5f\xca\xbc\xb7\xac\xcc\x96"), 0),
-		pactex_value_number(pactex_leaf_value(block,
-			"\x8f\x7a\x8a\xc2\x82\x62\x82\x66\x96\x87\x9d\xc9",
+		pactex_value_number(pactex_dual_value(block,
+			"\x83\x8b\x81\x5b\x83\x76\x82\x62\x82\x66\x96\x87\x90\x94",
 			"\xd1\xad\xad\x68\xa3\xc3\xa3\xc7\xc3\xb6\x94\xb5"), 0),
-		pactex_value_number(pactex_leaf_value(block,
-			"\x8f\x7a\x8a\xc2\x82\x62\x82\x66\x90\xd8\x8a\xb7\x8e\x9e\x8a\xd4",
+		pactex_value_number(pactex_dual_value(block,
+			"\x83\x8b\x81\x5b\x83\x76\x82\x62\x82\x66\x90\xd8\x82\xe8\x91\xd6\x82\xa6\x8e\x9e\x8a\xd4",
 			"\xd1\xad\xad\x68\xa3\xc3\xa3\xc7\xc7\xd0\x93\x51\x95\x72\xe9\x67"), 0));
 	free_string(name);
 	name = cstr_to_string(flat && flat->type == EX_STRING && flat->s ? flat->s->text : "");
@@ -800,38 +805,41 @@ enum {
 	PACTEX_EPT_CG_DETECTION = 27,
 	PACTEX_EPT_COUNT = 31,
 };
-static const char *const pactex_ept_names[PACTEX_EPT_COUNT] = {
-	"\xb0\xb4\xe2\x6f",                                     /* 0 按鈕 */
-	"\x99\x7a\xb2\xe9\xa5\xdc\xa5\xc3\xa5\xaf\xa5\xb9",             /* 1 檢查ボックス */
-	"\xd8\x51\x9d\x4c\x84\xd3\x97\x6c",                         /* 2 豎滾動條 */
-	"\x99\x4d\x9d\x4c\x84\xd3\x97\x6c",                         /* 3 橫滾動條 */
-	"\xce\xc4\xb1\xbe\xa5\xdc\xa5\xc3\xa5\xaf\xa5\xb9",             /* 4 文本ボックス */
-	"\xa5\xea\xa5\xb9\xa5\xc8\xa5\xdc\xa5\xc3\xa5\xaf\xa5\xb9",     /* 5 リストボックス */
-	"\xa5\xb3\xa5\xf3\xa5\xdc\xa5\xdc\xa5\xc3\xa5\xaf\xa5\xb9",     /* 6 コンボボックス */
-	"\xa5\xde\xa5\xeb\xa5\xc1\xa5\xe9\xa5\xa4\xa5\xf3\xce\xc4\xb1\xbe\xa5\xdc\xa5\xc3\xa5\xaf\xa5\xb9", /* 7 */
-	"\xa5\xec\xa5\xa4\xa5\xa2\xa5\xa6\xa5\xc8\xa5\xdc\xa5\xc3\xa5\xaf\xa5\xb9", /* 8 レイアウトボックス */
-	"\xa5\xe9\xa5\xb8\xa5\xaa\xb0\xb4\xe2\x6f\xa5\xdc\xa5\xc3\xa5\xaf\xa5\xb9", /* 9 ラジオ按鈕ボックス */
-	"\xd0\xc5\xcf\xa2\xb4\xb0\xbf\xda",                         /* 10 信息窗口 */
-	"\xa5\xb9\xa5\xd4\xa5\xf3\xa5\xdc\xa5\xc3\xa5\xaf\xa5\xb9",     /* 11 スピンボックス */
-	"\xd8\x51\xbb\xac\x89\x4b\xa9\x60\xa5\xd0\xa9\x60",             /* 12 豎滑塊ーバー */
-	"\x99\x4d\xbb\xac\x89\x4b\xa9\x60\xa5\xd0\xa9\x60",             /* 13 橫滑塊ーバー */
-	"\xa5\xd1\xa5\xcd\xa5\xeb",                                 /* 14 パネル */
-	"\xa5\xd5\xa5\xa9\xa9\x60\xa5\xe0",                         /* 15 フォーム */
-	"\xa5\xd5\xa5\xa9\xa9\x60\xa5\xe0\xc8\xba\xbd\x4d",             /* 16 フォーム群組 */
-	"\xa5\xe6\xa9\x60\xa5\xb6\xa5\xb3\xa5\xf3\xa5\xdd\xa9\x60\xa5\xcd\xa5\xf3\xa5\xc8", /* 17 ユーザコンポーネント */
-	"\xb5\xcd\xb5\xc8\xbc\x89\xb2\xbf\xbc\xfe",                     /* 18 低等級部件 */
-	"\xa3\xc3\xa3\xc7\xb2\xbf\xbc\xfe",                         /* 19 ＣＧ部件 */
-	"\xd1\xad\xad\x68\xa3\xc3\xa3\xc7\xb2\xbf\xbc\xfe",             /* 20 循環ＣＧ部件 */
-	"\xce\xc4\xb1\xbe\xb2\xbf\xbc\xfe",                         /* 21 文本部件 */
-	"\x99\x4d\xa5\xb2\xa9\x60\xa5\xb8\xb2\xbf\xbc\xfe",             /* 22 橫ゲージ部件 */
-	"\xd8\x51\xa5\xb2\xa9\x60\xa5\xb8\xb2\xbf\xbc\xfe",             /* 23 豎ゲージ部件 */
-	"\x94\xb5\xd7\xd6\xb2\xbf\xbc\xfe",                         /* 24 數字部件 */
-	"\xbe\xd8\xd0\xce\xb2\xbf\xbc\xfe",                         /* 25 矩形部件 */
-	"\x98\x8b\xba\x42\xb2\xbf\xbc\xfe",                         /* 26 構築部件 */
-	"\xa3\xc3\xa3\xc7\xc5\xd0\xb6\xa8\xb2\xbf\xbc\xfe",             /* 27 ＣＧ判定部件 */
-	"\xa5\xd5\xa5\xe9\xa5\xc3\xa5\xc8\xb2\xbf\xbc\xfe",             /* 28 フラット部件 */
-	"\xa3\xb3\xa3\xc4\xa5\xec\xa5\xa4\xa5\xe4\xb2\xbf\xbc\xfe",     /* 29 ３Ｄレイヤ部件 */
-	"\xa5\xe0\xa9\x60\xa5\xd3\xa9\x60\xb2\xbf\xbc\xfe",             /* 30 ムービー部件 */
+static const struct { const char *sjis, *gbk; } pactex_ept_names[PACTEX_EPT_COUNT] = {
+	{ "\x83\x7b\x83\x5e\x83\x93",                                           "\xb0\xb4\xe2\x6f" },                                                 /* 0 ボタン / 按鈕 */
+	{ "\x83\x60\x83\x46\x83\x62\x83\x4e\x83\x7b\x83\x62\x83\x4e\x83\x58",   "\x99\x7a\xb2\xe9\xa5\xdc\xa5\xc3\xa5\xaf\xa5\xb9" },                 /* 1 チェックボックス / 檢查ボックス */
+	{ "\x8f\x63\x83\x58\x83\x4e\x83\x8d\x81\x5b\x83\x8b\x83\x6f\x81\x5b",   "\xd8\x51\x9d\x4c\x84\xd3\x97\x6c" },                                 /* 2 縦スクロールバー / 豎滾動條 */
+	{ "\x89\xa1\x83\x58\x83\x4e\x83\x8d\x81\x5b\x83\x8b\x83\x6f\x81\x5b",   "\x99\x4d\x9d\x4c\x84\xd3\x97\x6c" },                                 /* 3 横スクロールバー / 橫滾動條 */
+	{ "\x83\x65\x83\x4c\x83\x58\x83\x67\x83\x7b\x83\x62\x83\x4e\x83\x58",   "\xce\xc4\xb1\xbe\xa5\xdc\xa5\xc3\xa5\xaf\xa5\xb9" },                 /* 4 テキストボックス / 文本ボックス */
+	{ "\x83\x8a\x83\x58\x83\x67\x83\x7b\x83\x62\x83\x4e\x83\x58",           "\xa5\xea\xa5\xb9\xa5\xc8\xa5\xdc\xa5\xc3\xa5\xaf\xa5\xb9" },         /* 5 リストボックス */
+	{ "\x83\x52\x83\x93\x83\x7b\x83\x7b\x83\x62\x83\x4e\x83\x58",           "\xa5\xb3\xa5\xf3\xa5\xdc\xa5\xdc\xa5\xc3\xa5\xaf\xa5\xb9" },         /* 6 コンボボックス */
+	{ "\x83\x7d\x83\x8b\x83\x60\x83\x89\x83\x43\x83\x93\x83\x65\x83\x4c\x83\x58\x83\x67\x83\x7b\x83\x62\x83\x4e\x83\x58",
+	  "\xa5\xde\xa5\xeb\xa5\xc1\xa5\xe9\xa5\xa4\xa5\xf3\xce\xc4\xb1\xbe\xa5\xdc\xa5\xc3\xa5\xaf\xa5\xb9" },                                       /* 7 マルチラインテキストボックス */
+	{ "\x83\x8c\x83\x43\x83\x41\x83\x45\x83\x67\x83\x7b\x83\x62\x83\x4e\x83\x58", "\xa5\xec\xa5\xa4\xa5\xa2\xa5\xa6\xa5\xc8\xa5\xdc\xa5\xc3\xa5\xaf\xa5\xb9" }, /* 8 レイアウトボックス */
+	{ "\x83\x89\x83\x57\x83\x49\x83\x7b\x83\x5e\x83\x93\x83\x7b\x83\x62\x83\x4e\x83\x58",
+	  "\xa5\xe9\xa5\xb8\xa5\xaa\xb0\xb4\xe2\x6f\xa5\xdc\xa5\xc3\xa5\xaf\xa5\xb9" },                                                               /* 9 ラジオボタンボックス / ラジオ按鈕ボックス */
+	{ "\x83\x81\x83\x62\x83\x5a\x81\x5b\x83\x57\x83\x45\x83\x42\x83\x93\x83\x68\x83\x45", "\xd0\xc5\xcf\xa2\xb4\xb0\xbf\xda" },                 /* 10 メッセージウィンドウ / 信息窗口 */
+	{ "\x83\x58\x83\x73\x83\x93\x83\x7b\x83\x62\x83\x4e\x83\x58",           "\xa5\xb9\xa5\xd4\xa5\xf3\xa5\xdc\xa5\xc3\xa5\xaf\xa5\xb9" },         /* 11 スピンボックス */
+	{ "\x8f\x63\x83\x58\x83\x89\x83\x43\x83\x5f\x81\x5b\x83\x6f\x81\x5b",   "\xd8\x51\xbb\xac\x89\x4b\xa9\x60\xa5\xd0\xa9\x60" },                 /* 12 縦スライダーバー / 豎滑塊ーバー */
+	{ "\x89\xa1\x83\x58\x83\x89\x83\x43\x83\x5f\x81\x5b\x83\x6f\x81\x5b",   "\x99\x4d\xbb\xac\x89\x4b\xa9\x60\xa5\xd0\xa9\x60" },                 /* 13 横スライダーバー / 橫滑塊ーバー */
+	{ "\x83\x70\x83\x6c\x83\x8b",                                           "\xa5\xd1\xa5\xcd\xa5\xeb" },                                         /* 14 パネル */
+	{ "\x83\x74\x83\x48\x81\x5b\x83\x80",                                   "\xa5\xd5\xa5\xa9\xa9\x60\xa5\xe0" },                                 /* 15 フォーム */
+	{ "\x83\x74\x83\x48\x81\x5b\x83\x80\x83\x4f\x83\x8b\x81\x5b\x83\x76",   "\xa5\xd5\xa5\xa9\xa9\x60\xa5\xe0\xc8\xba\xbd\x4d" },                 /* 16 フォームグループ / フォーム群組 */
+	{ "\x83\x86\x81\x5b\x83\x55\x83\x52\x83\x93\x83\x7c\x81\x5b\x83\x6c\x83\x93\x83\x67",
+	  "\xa5\xe6\xa9\x60\xa5\xb6\xa5\xb3\xa5\xf3\xa5\xdd\xa9\x60\xa5\xcd\xa5\xf3\xa5\xc8" },                                                       /* 17 ユーザコンポーネント */
+	{ "\x92\xe1\x83\x8c\x83\x78\x83\x8b\x83\x70\x81\x5b\x83\x63",           "\xb5\xcd\xb5\xc8\xbc\x89\xb2\xbf\xbc\xfe" },                         /* 18 低レベルパーツ / 低等級部件 */
+	{ "\x82\x62\x82\x66\x83\x70\x81\x5b\x83\x63",                           "\xa3\xc3\xa3\xc7\xb2\xbf\xbc\xfe" },                                 /* 19 ＣＧパーツ / ＣＧ部件 */
+	{ "\x83\x8b\x81\x5b\x83\x76\x82\x62\x82\x66\x83\x70\x81\x5b\x83\x63",   "\xd1\xad\xad\x68\xa3\xc3\xa3\xc7\xb2\xbf\xbc\xfe" },                 /* 20 ループＣＧパーツ / 循環ＣＧ部件 */
+	{ "\x83\x65\x83\x4c\x83\x58\x83\x67\x83\x70\x81\x5b\x83\x63",           "\xce\xc4\xb1\xbe\xb2\xbf\xbc\xfe" },                                 /* 21 テキストパーツ / 文本部件 */
+	{ "\x89\xa1\x83\x51\x81\x5b\x83\x57\x83\x70\x81\x5b\x83\x63",           "\x99\x4d\xa5\xb2\xa9\x60\xa5\xb8\xb2\xbf\xbc\xfe" },                 /* 22 横ゲージパーツ / 橫ゲージ部件 */
+	{ "\x8f\x63\x83\x51\x81\x5b\x83\x57\x83\x70\x81\x5b\x83\x63",           "\xd8\x51\xa5\xb2\xa9\x60\xa5\xb8\xb2\xbf\xbc\xfe" },                 /* 23 縦ゲージパーツ / 豎ゲージ部件 */
+	{ "\x90\x94\x8e\x9a\x83\x70\x81\x5b\x83\x63",                           "\x94\xb5\xd7\xd6\xb2\xbf\xbc\xfe" },                                 /* 24 数字パーツ / 數字部件 */
+	{ "\x8b\xe9\x8c\x60\x83\x70\x81\x5b\x83\x63",                           "\xbe\xd8\xd0\xce\xb2\xbf\xbc\xfe" },                                 /* 25 矩形パーツ / 矩形部件 */
+	{ "\x8d\x5c\x92\x7a\x83\x70\x81\x5b\x83\x63",                           "\x98\x8b\xba\x42\xb2\xbf\xbc\xfe" },                                 /* 26 構築パーツ / 構築部件 */
+	{ "\x82\x62\x82\x66\x94\xbb\x92\xe8\x83\x70\x81\x5b\x83\x63",           "\xa3\xc3\xa3\xc7\xc5\xd0\xb6\xa8\xb2\xbf\xbc\xfe" },                 /* 27 ＣＧ判定パーツ / ＣＧ判定部件 */
+	{ "\x83\x74\x83\x89\x83\x62\x83\x67\x83\x70\x81\x5b\x83\x63",           "\xa5\xd5\xa5\xe9\xa5\xc3\xa5\xc8\xb2\xbf\xbc\xfe" },                 /* 28 フラットパーツ / フラット部件 */
+	{ "\x82\x52\x82\x63\x83\x8c\x83\x43\x83\x84\x83\x70\x81\x5b\x83\x63",   "\xa3\xb3\xa3\xc4\xa5\xec\xa5\xa4\xa5\xe4\xb2\xbf\xbc\xfe" },         /* 29 ３Ｄレイヤパーツ / ３Ｄレイヤ部件 */
+	{ "\x83\x80\x81\x5b\x83\x72\x81\x5b\x83\x70\x81\x5b\x83\x63",           "\xa5\xe0\xa9\x60\xa5\xd3\xa9\x60\xb2\xbf\xbc\xfe" },                 /* 30 ムービーパーツ / ムービー部件 */
 };
 
 static int pactex_native_type(const char *name)
@@ -839,16 +847,28 @@ static int pactex_native_type(const char *name)
 	if (!name)
 		return -1;
 	for (int i = 0; i < PACTEX_EPT_COUNT; i++) {
-		if (!strcmp(name, pactex_ept_names[i]))
+		if (!strcmp(name, pactex_ept_names[i].sjis) || !strcmp(name, pactex_ept_names[i].gbk))
 			return i;
 	}
+	/* Aliases (rectangular hit detection, sliders without バー suffix, GBK katakana button). */
+	if (!strcmp(name, "\x8b\xe9\x8c\x60\x94\xbb\x92\xe8\x83\x70\x81\x5b\x83\x63") || /* 矩形判定パーツ */
+	    !strcmp(name, "\xbe\xd8\xd0\xce\xc5\xd0\xb6\xa8\xb2\xbf\xbc\xfe"))            /* 矩形判定部件 */
+		return PACTEX_EPT_RECT;
+	if (!strcmp(name, "\x8f\x63\x83\x58\x83\x89\x83\x43\x83\x5f\x81\x5b"))            /* 縦スライダー */
+		return 12;
+	if (!strcmp(name, "\x89\xa1\x83\x58\x83\x89\x83\x43\x83\x5f\x81\x5b"))            /* 横スライダー */
+		return 13;
+	if (!strcmp(name, GBK_BUTTON))
+		return PACTEX_EPT_BUTTON;
 	return -1;
 }
 
 static const char *pactex_parts_type_name(struct ex_tree *node)
 {
 	const char *type = pactex_get_string(node, SJIS_PARTS_TYPE);
-	return type ? type : pactex_get_string(node, GBK_PARTS_TYPE);
+	if (!type) type = pactex_get_string(node, GBK_PARTS_TYPE);
+	if (!type) type = pactex_dual_opt_string(node, "\x83\x5e\x83\x43\x83\x76", "\xa5\xbf\xa5\xa4\xa5\xd7"); /* タイプ */
+	return type;
 }
 
 /* Low-level state types the loader builds (see pactex_apply_low_level_state);
@@ -857,9 +877,7 @@ static int pactex_low_level_type(struct ex_tree *state)
 {
 	const char *type = pactex_parts_type_name(state);
 	if (!type) return -1;
-	if (!strcmp(type, "\x83\x65\x83\x4c\x83\x58\x83\x67\x83\x70\x81\x5b\x83\x63")) /* テキストパーツ */
-		return PACTEX_EPT_TEXT;
-	if (!strcmp(type, "\x82\x62\x82\x66\x83\x70\x81\x5b\x83\x63")) /* ＣＧパーツ */
+	if (!strcmp(type, "\x8b\xf3\x82\x62\x82\x66\x83\x70\x81\x5b\x83\x63")) /* 空ＣＧパーツ */
 		return PACTEX_EPT_CG;
 	switch (pactex_native_type(type)) {
 	case PACTEX_EPT_CG: return PACTEX_EPT_CG;
@@ -1331,9 +1349,9 @@ static bool pactex_construction_step(struct ex_tree *node, struct pactex_cp_step
 		// 0x81 0x5C (the SJIS dash the original joins, 0x4fd8bf). The
 		// numbers must be ints (the floats may be either); a colour item
 		// that is missing is 0.
-		static const char text_gbk[] = "\xce\xc4\xb1\xbe";		/* 文本 */
-		struct ex_value *t = pactex_leaf_value(node, text_gbk, text_gbk);
-		if (!t || t->type != EX_STRING || !t->s || !gfx_text_cn_gdi())
+		struct ex_value *t = pactex_dual_value(node,
+			"\x83\x65\x83\x4c\x83\x58\x83\x67", "\xce\xc4\xb1\xbe"); /* テキスト / 文本 */
+		if (!t || t->type != EX_STRING || !t->s)
 			return false;
 		s->text = t->s->text;
 		if (strstr(s->text, "\x81\x5c"))
@@ -1694,7 +1712,7 @@ static struct pactex_cp_step *pactex_construction_plan(struct ex_tree *state, in
 	struct ex_tree *list = pactex_construction_steps(state);
 	if (!list || !list->nr_children)
 		return NULL;
-	struct ex_list *area = pactex_get_list(state, SJIS_SURFACE_AREA);
+	struct ex_list *area = pactex_dual_list(state, SJIS_SURFACE_AREA, GBK_SURFACE_AREA);
 	if (!area) area = pactex_get_list(state, "\xa5\xb5\xa9\x60\xa5\xd5\xa5\xa7\xa5\xa4\xa5\xb9\xa5\xa8\xa5\xea\xa5\xa2");
 	for (unsigned i = 0; area && i < area->nr_items; i++) {
 		if (area->items[i].value.type != EX_INT || area->items[i].value.i)
@@ -2140,7 +2158,7 @@ static bool pactex_apply_low_level_state(struct ex_tree *state, int parts_no, in
 	}
 	parts->component_state_type[pe_state - 1] = type;
 	// Use the matching setter: the CG setter would destroy a text state.
-	struct ex_list *area = pactex_get_list(state, SJIS_SURFACE_AREA);
+	struct ex_list *area = pactex_dual_list(state, SJIS_SURFACE_AREA, GBK_SURFACE_AREA);
 	if (!area) area = pactex_get_list(state, "\xa5\xb5\xa9\x60\xa5\xd5\xa5\xa7\xa5\xa4\xa5\xb9\xa5\xa8\xa5\xea\xa5\xa2");
 	int x, y, w, h;
 	if (area && area->nr_items >= 4 &&
@@ -2225,40 +2243,26 @@ static void pactex_resolve_scroll_links(struct activity *act)
 	pactex_nr_scroll_links = 0;
 }
 
-/* The keys of a 檢查ボックス and of a ラジオ按鈕ボックス that are theirs alone,
- * as the CN executable spells them (0x7d8900 .. 0x7d8a1c, 0x7dbd7c). No SJIS
- * pactex was read: an SJIS release's spellings are not known and none is
- * guessed, so only a pactex with these names makes a check box. The font's
- * keys and the two spacings are those of pactex_message_keys. */
-#define PACTEX_CB_BUTTON_COLOR "\xb0\xb4\xe2\x6f\xa4\xce\xc9\xab"	/* 按鈕の色 */
-#define PACTEX_CB_ENABLE "\xd3\xd0\x84\xbf\xa0\xee\x91\x42"		/* 有効狀態 */
-#define PACTEX_CB_CHECKED "\x99\x7a\xb2\xe9\xa0\xee\x91\x42"		/* 檢查狀態 */
-#define PACTEX_CB_OVER "\xb8\xb2\xc9\x77"				/* 覆蓋 */
-#define PACTEX_CB_OVER_CHECKED PACTEX_CB_OVER "\x99\x7a\xb2\xe9"	/* 覆蓋檢查 */
-#define PACTEX_CB_FLAT "\xa5\xd5\xa5\xe9\xa5\xc3\xa5\xc8\xc3\xfb"	/* フラット名 */
-#define PACTEX_CB_TEXT "\xce\xc4\xb1\xbe"				/* 文本 */
-#define PACTEX_CB_TEXT_POS PACTEX_CB_TEXT "\xce\xbb\xd6\xc3"		/* 文本位置 */
-#define PACTEX_CB_BUTTON_MODE "\xb0\xb4\xe2\x6f\xc4\xa3\xca\xbd"	/* 按鈕模式 */
-#define PACTEX_RADIO_LIST "\x99\x7a\xb2\xe9\xa5\xdc\xa5\xc3\xa5\xaf\xa5\xb9\xa5\xea\xa5\xb9\xa5\xc8" /* 檢查ボックスリスト */
-
-static struct ex_value *pactex_cn_value(struct ex_tree *node, const char *key)
-{
-	return pactex_leaf_value(node, key, key);
-}
-
-static int pactex_cn_item(struct ex_tree *node, const char *key, unsigned index, int fallback)
-{
-	struct ex_value *v = pactex_cn_value(node, key);
-	if (!v || v->type != EX_LIST || !v->list || index >= v->list->nr_items)
-		return fallback;
-	return pactex_value_number(&v->list->items[index].value, fallback);
-}
-
-static const char *pactex_cn_string(struct ex_tree *node, const char *key)
-{
-	struct ex_value *v = pactex_cn_value(node, key);
-	return v && v->type == EX_STRING && v->s ? v->s->text : "";
-}
+/* CheckBox and RadioBox property keys (SJIS + GBK). */
+#define GBK_CB_BUTTON_COLOR    "\xb0\xb4\xe2\x6f\xa4\xce\xc9\xab"                         /* 按鈕の色 */
+#define SJIS_CB_ENABLE         "\x97\x4c\x8c\xf8\x8f\xf3\x91\xd4"                         /* 有効状態 */
+#define GBK_CB_ENABLE          "\xd3\xd0\x84\xbf\xa0\xee\x91\x42"                         /* 有効狀態 */
+#define SJIS_CB_CHECKED        "\x83\x60\x83\x46\x83\x62\x83\x4e\x8f\xf3\x91\xd4"         /* チェック状態 */
+#define GBK_CB_CHECKED         "\x99\x7a\xb2\xe9\xa0\xee\x91\x42"                         /* 檢查狀態 */
+#define SJIS_CB_OVER           "\x8f\xe3\x8f\x91\x82\xab"                                 /* 上書き */
+#define GBK_CB_OVER            "\xb8\xb2\xc9\x77"                                         /* 覆蓋 */
+#define SJIS_CB_OVER_CHECKED   SJIS_CB_OVER "\x83\x60\x83\x46\x83\x62\x83\x4e"            /* 上書きチェック */
+#define GBK_CB_OVER_CHECKED    GBK_CB_OVER "\x99\x7a\xb2\xe9"                             /* 覆蓋檢查 */
+#define SJIS_CB_FLAT           "\x83\x74\x83\x89\x83\x62\x83\x67\x96\xbc"                 /* フラット名 */
+#define GBK_CB_FLAT            "\xa5\xd5\xa5\xe9\xa5\xc3\xa5\xc8\xc3\xfb"                 /* フラット名 */
+#define SJIS_CB_TEXT           "\x83\x65\x83\x4c\x83\x58\x83\x67"                         /* テキスト */
+#define GBK_CB_TEXT            "\xce\xc4\xb1\xbe"                                         /* 文本 */
+#define SJIS_CB_TEXT_POS       SJIS_CB_TEXT "\x88\xca\x92\x75"                            /* テキスト位置 */
+#define GBK_CB_TEXT_POS        GBK_CB_TEXT "\xce\xbb\xd6\xc3"                             /* 文本位置 */
+#define SJIS_CB_BUTTON_MODE    "\x83\x7b\x83\x5e\x83\x93\x83\x82\x81\x5b\x83\x68"         /* ボタンモード */
+#define GBK_CB_BUTTON_MODE     "\xb0\xb4\xe2\x6f\xc4\xa3\xca\xbd"                         /* 按鈕模式 */
+#define SJIS_RADIO_LIST        "\x83\x60\x83\x46\x83\x62\x83\x4e\x83\x7b\x83\x62\x83\x4e\x83\x58\x83\x8a\x83\x58\x83\x67" /* チェックボックスリスト */
+#define GBK_RADIO_LIST         "\x99\x7a\xb2\xe9\xa5\xdc\xa5\xc3\xa5\xaf\xa5\xb9\xa5\xea\xa5\xb9\xa5\xc8"                 /* 檢查ボックスリスト */
 
 // A colour of the font as the loader keeps it (0x52c1c9 ..): within 0..255.
 static int pactex_color_byte(int v)
@@ -2267,24 +2271,20 @@ static int pactex_color_byte(int v)
 }
 
 /*
- * 檢查ボックス: the native loader (0x52bd70) reads the widget's 21 keys, each
- * with a default of its own for a key that is missing (サイズ 16 x 16, 有効
- * 狀態 1, 檢查狀態 0, 按鈕の色 200, フォントサイズ 16, フォント色 255, 文本位
- * 置 4, the rest 0 or ""), keeps 有効狀態, 檢查狀態 and 按鈕模式 as "== 1",
- * and marks the widget to be built. 檢查狀態 is written as it is: no event,
- * no radio box. The states are built here at once, so that the parts has its
- * size when the activity is laid out (parts/checkbox.c).
+ * チェックボックス / 檢查ボックス: the native loader (0x52bd70) reads the
+ * widget's 21 keys (サイズ 16 x 16, 有効状態 1, チェック状態 0, ボタンの色
+ * 200, フォントサイズ 16, フォント色 255, テキスト位置 4, the rest 0 or "").
  */
 static void pactex_apply_check_box(struct ex_tree *type_info, struct parts *p)
 {
 	struct parts_checkbox *cb = parts_get_checkbox(p);
-	cb->w = pactex_cn_item(type_info, GBK_SIZE, 0, 16);
-	cb->h = pactex_cn_item(type_info, GBK_SIZE, 1, 16);
-	cb->enable = (int)pactex_value_number(pactex_cn_value(type_info, PACTEX_CB_ENABLE), 1) == 1;
-	cb->checked = (int)pactex_value_number(pactex_cn_value(type_info, PACTEX_CB_CHECKED), 0) == 1;
-	cb->r = pactex_cn_item(type_info, PACTEX_CB_BUTTON_COLOR, 0, 200);
-	cb->g = pactex_cn_item(type_info, PACTEX_CB_BUTTON_COLOR, 1, 200);
-	cb->b = pactex_cn_item(type_info, PACTEX_CB_BUTTON_COLOR, 2, 200);
+	cb->w = pactex_dual_item(type_info, SJIS_SIZE, GBK_SIZE, 0, 16);
+	cb->h = pactex_dual_item(type_info, SJIS_SIZE, GBK_SIZE, 1, 16);
+	cb->enable = (int)pactex_value_number(pactex_dual_value(type_info, SJIS_CB_ENABLE, GBK_CB_ENABLE), 1) == 1;
+	cb->checked = (int)pactex_value_number(pactex_dual_value(type_info, SJIS_CB_CHECKED, GBK_CB_CHECKED), 0) == 1;
+	cb->r = pactex_dual_item(type_info, SJIS_BUTTON_COLOR, GBK_CB_BUTTON_COLOR, 0, 200);
+	cb->g = pactex_dual_item(type_info, SJIS_BUTTON_COLOR, GBK_CB_BUTTON_COLOR, 1, 200);
+	cb->b = pactex_dual_item(type_info, SJIS_BUTTON_COLOR, GBK_CB_BUTTON_COLOR, 2, 200);
 	cb->font.type = pactex_message_number(type_info, PACTEX_MW_FACE, 0);
 	cb->font.size = pactex_message_number(type_info, PACTEX_MW_SIZE, 16);
 	cb->font.r = pactex_color_byte(pactex_message_item(type_info, PACTEX_MW_COLOR, 0, 255));
@@ -2295,40 +2295,39 @@ static void pactex_apply_check_box(struct ex_tree *type_info, struct parts *p)
 	cb->font.edge_r = pactex_color_byte(pactex_message_item(type_info, PACTEX_MW_EDGE_COLOR, 0, 0));
 	cb->font.edge_g = pactex_color_byte(pactex_message_item(type_info, PACTEX_MW_EDGE_COLOR, 1, 0));
 	cb->font.edge_b = pactex_color_byte(pactex_message_item(type_info, PACTEX_MW_EDGE_COLOR, 2, 0));
-	parts_checkbox_set_string(p, &cb->cg_name, pactex_cn_string(type_info, GBK_CG_MEI));
+	parts_checkbox_set_string(p, &cb->cg_name, pactex_dual_string(type_info, SJIS_CG_MEI, GBK_CG_MEI));
 	parts_checkbox_set_string(p, &cb->over_cg_name,
-			pactex_cn_string(type_info, PACTEX_CB_OVER "\xa3\xc3\xa3\xc7\xc3\xfb"));
+			pactex_dual_string(type_info,
+				SJIS_CB_OVER "\x82\x62\x82\x66\x96\xbc",
+				GBK_CB_OVER "\xa3\xc3\xa3\xc7\xc3\xfb"));
 	parts_checkbox_set_string(p, &cb->over_checked_cg_name,
-			pactex_cn_string(type_info, PACTEX_CB_OVER_CHECKED "\xa3\xc3\xa3\xc7\xc3\xfb"));
-	parts_checkbox_set_string(p, &cb->flat_name, pactex_cn_string(type_info, PACTEX_CB_FLAT));
+			pactex_dual_string(type_info,
+				SJIS_CB_OVER_CHECKED "\x82\x62\x82\x66\x96\xbc",
+				GBK_CB_OVER_CHECKED "\xa3\xc3\xa3\xc7\xc3\xfb"));
+	parts_checkbox_set_string(p, &cb->flat_name,
+			pactex_dual_string(type_info, SJIS_CB_FLAT, GBK_CB_FLAT));
 	parts_checkbox_set_string(p, &cb->over_flat_name,
-			pactex_cn_string(type_info, PACTEX_CB_OVER PACTEX_CB_FLAT));
+			pactex_dual_string(type_info, SJIS_CB_OVER SJIS_CB_FLAT, GBK_CB_OVER GBK_CB_FLAT));
 	parts_checkbox_set_string(p, &cb->over_checked_flat_name,
-			pactex_cn_string(type_info, PACTEX_CB_OVER_CHECKED PACTEX_CB_FLAT));
-	parts_checkbox_set_string(p, &cb->text, pactex_cn_string(type_info, PACTEX_CB_TEXT));
-	cb->text_pos = pactex_value_number(pactex_cn_value(type_info, PACTEX_CB_TEXT_POS), 4);
-	cb->button_mode = (int)pactex_value_number(pactex_cn_value(type_info, PACTEX_CB_BUTTON_MODE), 0) == 1;
+			pactex_dual_string(type_info, SJIS_CB_OVER_CHECKED SJIS_CB_FLAT, GBK_CB_OVER_CHECKED GBK_CB_FLAT));
+	parts_checkbox_set_string(p, &cb->text,
+			pactex_dual_string(type_info, SJIS_CB_TEXT, GBK_CB_TEXT));
+	cb->text_pos = pactex_value_number(pactex_dual_value(type_info, SJIS_CB_TEXT_POS, GBK_CB_TEXT_POS), 4);
+	cb->button_mode = (int)pactex_value_number(pactex_dual_value(type_info, SJIS_CB_BUTTON_MODE, GBK_CB_BUTTON_MODE), 0) == 1;
 	cb->char_space = pactex_message_number(type_info, PACTEX_MW_CHAR_SPACE, 0);
 	cb->line_space = pactex_message_number(type_info, PACTEX_MW_LINE_SPACE, 0);
-	// The widget's inner parts take the click whatever 點擊許可 says
+	// The widget's inner parts take the click whatever クリック許可/點擊許可 says
 	// (0x52e8a0 sets their +0x1a4), as a button's do.
 	PE_SetClickable(p->no, true);
 	parts_checkbox_rebuild(p);
 }
 
 /*
- * 按鈕: the text the button draws on its states and its font (the native
- * loader 0x527910 reads them with the button's other keys: フォントタイプ,
- * フォントサイズ, フォント色, フォント太さ, フォント縁取り, フォント縁取り色,
- * 文本 (+0x1e4), 文本位置 (an int kept as a byte, +0x1fc), 文字間隔 (+0x200)
- * and 行間隔 (+0x204); a key that is missing is 0, a colour is kept within
- * 0..255). Only a pactex with the GBK 文本 key gets a text (the SJIS spelling
- * is not known). The states are drawn when the CG name is set
- * (parts_button_build_text_state).
+ * ボタン / 按鈕: the text the button draws on its states and its font.
  */
 static void pactex_apply_button_text(struct ex_tree *type_info, int parts_no)
 {
-	struct ex_value *text = pactex_cn_value(type_info, PACTEX_CB_TEXT);
+	struct ex_value *text = pactex_dual_value(type_info, SJIS_CB_TEXT, GBK_CB_TEXT);
 	if (!text || text->type != EX_STRING || !text->s)
 		return;
 	struct parts *p = parts_get(parts_no);
@@ -2344,23 +2343,21 @@ static void pactex_apply_button_text(struct ex_tree *type_info, int parts_no)
 	bt->font.edge_r = pactex_color_byte(pactex_message_item(type_info, PACTEX_MW_EDGE_COLOR, 0, 0));
 	bt->font.edge_g = pactex_color_byte(pactex_message_item(type_info, PACTEX_MW_EDGE_COLOR, 1, 0));
 	bt->font.edge_b = pactex_color_byte(pactex_message_item(type_info, PACTEX_MW_EDGE_COLOR, 2, 0));
-	bt->text_pos = (uint8_t)(int)pactex_value_number(pactex_cn_value(type_info, PACTEX_CB_TEXT_POS), 0);
+	bt->text_pos = (uint8_t)(int)pactex_value_number(pactex_dual_value(type_info, SJIS_CB_TEXT_POS, GBK_CB_TEXT_POS), 0);
 	bt->char_space = pactex_message_number(type_info, PACTEX_MW_CHAR_SPACE, 0);
 	bt->line_space = pactex_message_number(type_info, PACTEX_MW_LINE_SPACE, 0);
 }
 
-/* 檢查ボックスリスト of the radio boxes seen while loading one activity (see
- * pactex_apply_properties): the names of their check boxes, made numbers at
- * the end of pactex_load, when every parts of the activity has its name. */
+/* チェックボックスリスト / 檢查ボックスリスト of the radio boxes seen while loading one activity. */
 #define PACTEX_MAX_RADIO_LINKS 256
 static struct { int parts_no; char name[256]; } pactex_radio_links[PACTEX_MAX_RADIO_LINKS];
 static int pactex_nr_radio_links;
 
-/* ラジオ按鈕ボックス (native loader 0x56c170): the list's names in their order. */
+/* ラジオボタンボックス / ラジオ按鈕ボックス (native loader 0x56c170): the list's names in their order. */
 static void pactex_apply_radio_box(struct ex_tree *type_info, struct parts *p)
 {
 	parts_get_radio_box(p);
-	struct ex_value *v = pactex_cn_value(type_info, PACTEX_RADIO_LIST);
+	struct ex_value *v = pactex_dual_value(type_info, SJIS_RADIO_LIST, GBK_RADIO_LIST);
 	if (!v || v->type != EX_LIST || !v->list)
 		return;
 	for (unsigned i = 0; i < v->list->nr_items; i++) {
@@ -2399,42 +2396,28 @@ static void pactex_resolve_radio_links(struct activity *act)
 	pactex_nr_radio_links = 0;
 }
 
-/* The keys of the component parser (0x553650) for the sounds and the
- * on-cursor show link, as the CN executable spells them; no SJIS pactex was
- * read, so no SJIS spelling is guessed. */
-#define PACTEX_ON_CURSOR_SOUND "\xa5\xaa\xa5\xf3\xd6\xb8\xe1\x98\xd2\xf4\xd0\xa7"	/* オン指針音效 0x7db0b4 */
-#define PACTEX_CLICK_SOUND "\xfc\x63\x93\xf4\xd2\xf4\xd0\xa7"				/* 點擊音效 0x7db0a4 */
-#define PACTEX_ON_CURSOR_SHOW_LINK "\xa5\xaa\xa5\xf3\xd6\xb8\xe1\x98\xb1\xed\xca\xbe\xdf\x42\x84\xd3" /* オン指針表示連動 0x7db054 */
+/* Component sound and on-cursor show link keys (SJIS + GBK). */
+#define SJIS_ON_CURSOR_SOUND      "\x83\x49\x83\x93\x83\x4a\x81\x5b\x83\x5c\x83\x8b\x8c\xf8\x89\xca\x89\xb9"     /* オンカーソル効果音 */
+#define GBK_ON_CURSOR_SOUND       "\xa5\xaa\xa5\xf3\xd6\xb8\xe1\x98\xd2\xf4\xd0\xa7"                             /* オン指針音效 */
+#define SJIS_CLICK_SOUND          "\x83\x4e\x83\x8a\x83\x62\x83\x4e\x8c\xf8\x89\xca\x89\xb9"                     /* クリック効果音 */
+#define GBK_CLICK_SOUND           "\xfc\x63\x93\xf4\xd2\xf4\xd0\xa7"                                             /* 點擊音效 */
+#define SJIS_ON_CURSOR_SHOW_LINK  "\x83\x49\x83\x93\x83\x4a\x81\x5b\x83\x5c\x83\x8b\x95\x5c\x8e\xa6\x98\x41\x93\xae" /* オンカーソル表示連動 */
+#define GBK_ON_CURSOR_SHOW_LINK   "\xa5\xaa\xa5\xf3\xd6\xb8\xe1\x98\xb1\xed\xca\xbe\xdf\x42\x84\xd3"             /* オン指針表示連動 */
 
-/* オン指針音效 and 點擊音效 (0x554a04..0x554ab4): strings with an empty
- * default, into the sound names 2 and 3 (0x554bd0(i): +0x12c + i * 0x18 of
- * the block, the component's +0x1b0 + i * 0x18). A value that is not a
- * string is read as no name here (0x4182a0's handling of one was not read;
- * every component of the game has both keys as strings). */
 static void pactex_apply_sound_names(struct ex_tree *node, int parts_no)
 {
-	static const struct { const char *key; int slot; } keys[] = {
-		{ PACTEX_ON_CURSOR_SOUND, 2 },
-		{ PACTEX_CLICK_SOUND, 3 },
+	static const struct { const char *sjis, *gbk; int slot; } keys[] = {
+		{ SJIS_ON_CURSOR_SOUND, GBK_ON_CURSOR_SOUND, 2 },
+		{ SJIS_CLICK_SOUND, GBK_CLICK_SOUND, 3 },
 	};
 	for (unsigned i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
-		struct ex_value *v = pactex_cn_value(node, keys[i].key);
+		struct ex_value *v = pactex_dual_value(node, keys[i].sjis, keys[i].gbk);
 		if (v && v->type == EX_STRING && v->s && v->s->size)
 			parts_set_sound_name(parts_get(parts_no), keys[i].slot, v->s->text, v->s->size);
 	}
 }
 
-/* オン指針表示連動 (0x554445..0x5544de): a name, which the parser hands the
- * loader's resolver (0x55df10 through the std::function at +0x24 of its
- * third argument) and stores the number it gives at the block's +0xa0 (the
- * component's +0x124). The resolver looks the name up in the activity's
- * name table, which the loader fills for every component, the root
- * included, before it reads any (0x560b20 -> 0x55f6e0; 0x5616f0 keys it by
- * the short names), and gives 0 for a name that is not there: the order
- * does not matter. Here the names are resolved at the end of pactex_load,
- * when every parts of the activity has its name; "" and a name not found
- * give no link. The table's entries for the root's "" and its ルートパーツ
- * (this port's aliases, see pactex_load) are not looked at. */
+/* オンカーソル表示連動 / オン指針表示連動 (0x554445..0x5544de). */
 #define PACTEX_MAX_SHOW_LINKS 64
 static struct { int parts_no; char name[256]; } pactex_show_links[PACTEX_MAX_SHOW_LINKS];
 static int pactex_nr_show_links;
@@ -2442,7 +2425,7 @@ static int pactex_alias_first, pactex_alias_end;	/* act->parts[first..end) */
 
 static void pactex_add_show_link(struct ex_tree *node, int parts_no)
 {
-	struct ex_value *v = pactex_cn_value(node, PACTEX_ON_CURSOR_SHOW_LINK);
+	struct ex_value *v = pactex_dual_value(node, SJIS_ON_CURSOR_SHOW_LINK, GBK_ON_CURSOR_SHOW_LINK);
 	if (!v || v->type != EX_STRING || !v->s || !v->s->size)
 		return;
 	if (pactex_nr_show_links >= PACTEX_MAX_SHOW_LINKS) {
@@ -2535,11 +2518,12 @@ static void pactex_apply_properties(struct ex_tree *node, int parts_no)
 	int show = pactex_get_int(node, SJIS_SHOW, -1);
 	if (show < 0) show = pactex_get_int(node, GBK_SHOW, 1);
 	PE_SetShow(parts_no, show);
-	/* 編輯上表示 = 0 hides the parts and its subtree at run time as well
-	 * (native parser 0x553dfa stores it at parts +0xac; see
-	 * parts->edit_hidden). Only the CN spelling is known. */
+	/* エディタ上表示 / 編輯上表示 = 0 hides the parts and its subtree at run time as well
+	 * (native parser 0x553dfa stores it at parts +0xac; see parts->edit_hidden). */
 	parts_set_edit_hidden(parts_get(parts_no),
-		!pactex_get_int(node, "\xbe\x8e\xdd\x8b\xc9\xcf\xb1\xed\xca\xbe", 1));
+		!pactex_dual_int(node,
+			"\x83\x47\x83\x66\x83\x42\x83\x5e\x8f\xe3\x95\x5c\x8e\xa6",
+			"\xbe\x8e\xdd\x8b\xc9\xcf\xb1\xed\xca\xbe", 1));
 
 	/* Extract alpha: アルファ = int 0-255 */
 	int alpha = pactex_get_int(node, SJIS_ALPHA, -1);
@@ -2638,8 +2622,7 @@ static void pactex_apply_properties(struct ex_tree *node, int parts_no)
 	}
 
 	/* Determine parts type from type_info (SJIS or GBK) */
-	const char *ptype = pactex_get_string(type_info, SJIS_PARTS_TYPE);
-	if (!ptype) ptype = pactex_get_string(type_info, GBK_PARTS_TYPE);
+	const char *ptype = pactex_parts_type_name(type_info);
 
 	if (pactex_apply_message_window(type_info, ptype, parts_no))
 		return;
@@ -2679,31 +2662,31 @@ static void pactex_apply_properties(struct ex_tree *node, int parts_no)
 		if (widget_type == PARTS_COMPONENT_HSCROLLBAR)
 			parts_scrollbar_loaded(parts_get(parts_no));
 		/* The knob and the track (parts/scrollbar.c): 長さ, 幅, 前サイズ,
-		 * 次サイズ and 按鈕點擊移動量, 0 when missing (0x5446a9, the 幅
-		 * that follows, 0x544777, 0x5447de, 0x5449fa: the reader's
-		 * default is 0), and ＣＧ名, 覆蓋バーＣＧ名, 覆蓋背景ＣＧ名, ""
-		 * when missing (+0x58, +0xa0, +0xb8 of the properties). The GBK
-		 * spellings of the CN executable (0x7d9ed4 .. 0x7d9f9c) alone:
-		 * no SJIS pactex was read, and a bar named otherwise shows
-		 * nothing, as it did. Not read: the names of the two buttons and
-		 * every フラット名 (the game's are all empty). */
+		 * 次サイズ and ボタンクリック移動量 / 按鈕點擊移動量, 0 when missing,
+		 * and ＣＧ名, 上書きバーＣＧ名 / 覆蓋バーＣＧ名, 上書き背景ＣＧ名 /
+		 * 覆蓋背景ＣＧ名, "" when missing. */
 		if (ain->version >= 14) {
-			sb->length = pactex_value_number(pactex_cn_value(type_info,
-					"\xe9\x4c\xa4\xb5"), 0);				/* 長さ */
-			sb->width = pactex_value_number(pactex_cn_value(type_info,
-					"\xb7\xf9"), 0);					/* 幅 */
-			sb->prev_size = pactex_value_number(pactex_cn_value(type_info,
+			sb->length = pactex_value_number(pactex_dual_value(type_info,
+					"\x92\xb7\x82\xb3", "\xe9\x4c\xa4\xb5"), 0);		/* 長さ */
+			sb->width = pactex_value_number(pactex_dual_value(type_info,
+					"\x95\x9d", "\xb7\xf9"), 0);				/* 幅 */
+			sb->prev_size = pactex_value_number(pactex_dual_value(type_info,
+					"\x91\x4f\x83\x54\x83\x43\x83\x59",
 					"\xc7\xb0\xa5\xb5\xa5\xa4\xa5\xba"), 0);		/* 前サイズ */
-			sb->next_size = pactex_value_number(pactex_cn_value(type_info,
+			sb->next_size = pactex_value_number(pactex_dual_value(type_info,
+					"\x8e\x9f\x83\x54\x83\x43\x83\x59",
 					"\xb4\xce\xa5\xb5\xa5\xa4\xa5\xba"), 0);		/* 次サイズ */
-			sb->button_move = pactex_value_number(pactex_cn_value(type_info,
-					"\xb0\xb4\xe2\x6f\xfc\x63\x93\xf4\xd2\xc6\x84\xd3\xc1\xbf"), 0); /* 按鈕點擊移動量 */
+			sb->button_move = pactex_value_number(pactex_dual_value(type_info,
+					"\x83\x7b\x83\x5e\x83\x93\x83\x4e\x83\x8a\x83\x62\x83\x4e\x88\xda\x93\xae\x97\xca",
+					"\xb0\xb4\xe2\x6f\xfc\x63\x93\xf4\xd2\xc6\x84\xd3\xc1\xbf"), 0); /* ボタンクリック移動量 / 按鈕點擊移動量 */
 			parts_scrollbar_set_names(parts_get(parts_no),
-					pactex_cn_string(type_info, "\xa3\xc3\xa3\xc7\xc3\xfb"),	/* ＣＧ名 */
-					pactex_cn_string(type_info,
-						"\xb8\xb2\xc9\x77\xa5\xd0\xa9\x60\xa3\xc3\xa3\xc7\xc3\xfb"),	/* 覆蓋バーＣＧ名 */
-					pactex_cn_string(type_info,
-						"\xb8\xb2\xc9\x77\xb1\xb3\xbe\xb0\xa3\xc3\xa3\xc7\xc3\xfb"));	/* 覆蓋背景ＣＧ名 */
+					pactex_dual_string(type_info, SJIS_CG_MEI, GBK_CG_MEI),	/* ＣＧ名 */
+					pactex_dual_string(type_info,
+						"\x8f\xe3\x8f\x91\x82\xab\x83\x6f\x81\x5b\x82\x62\x82\x66\x96\xbc",
+						"\xb8\xb2\xc9\x77\xa5\xd0\xa9\x60\xa3\xc3\xa3\xc7\xc3\xfb"),	/* 上書きバーＣＧ名 / 覆蓋バーＣＧ名 */
+					pactex_dual_string(type_info,
+						"\x8f\xe3\x8f\x91\x82\xab\x94\x77\x8c\x69\x82\x62\x82\x66\x96\xbc",
+						"\xb8\xb2\xc9\x77\xb1\xb3\xbe\xb0\xa3\xc3\xa3\xc7\xc3\xfb"));	/* 上書き背景ＣＧ名 / 覆蓋背景ＣＧ名 */
 		}
 		/* 全體スクロール量サイズ連動 and 表示量サイズ連動 name the parts
 		 * whose size the two amounts follow (parts_scrollbar_total). The
@@ -2813,7 +2796,8 @@ static void pactex_apply_properties(struct ex_tree *node, int parts_no)
 	 *     キーダウン状態/    ← key-down (state 3)
 	 */
 	int state_idx = 0;
-	bool low_level = ptype && (!strcmp(ptype, SJIS_MULTI_LEVEL) ||
+	bool low_level = ptype && (!strcmp(ptype, SJIS_LOW_LEVEL) ||
+		!strcmp(ptype, SJIS_MULTI_LEVEL) ||
 		!strcmp(ptype, "\xb5\xcd\xb5\xc8\xbc\x89\xb2\xbf\xbc\xfe")); /* 低等級部件 */
 	for (unsigned i = 0; i < type_info->nr_children; i++) {
 		struct ex_tree *state = &type_info->children[i];
@@ -2848,10 +2832,9 @@ static void pactex_apply_properties(struct ex_tree *node, int parts_no)
 		if (pactex_get_surface_area(state, &sa_x, &sa_y, &sa_w, &sa_h, 0))
 			PE_SetPartsCGSurfaceArea(parts_no, sa_x, sa_y, sa_w, sa_h, pe_state);
 
-		/* ＣＧ判定部件 (CG Detection Parts) in normal state → mark as clickable button */
+		/* ＣＧ判定パーツ / ＣＧ判定部件 (CG Detection Parts) in normal state → mark as clickable */
 		if (pe_state == 1) {
-			const char *stype = pactex_get_string(state, SJIS_PARTS_TYPE);
-			if (!stype) stype = pactex_get_string(state, GBK_PARTS_TYPE);
+			const char *stype = pactex_parts_type_name(state);
 			if (stype && (strstr(stype, GBK_CG_DETECT) || strstr(stype, SJIS_CG_DETECT))) {
 				PE_SetClickable(parts_no, true);
 			}
@@ -2941,15 +2924,13 @@ static bool pactex_apply_native_type(struct ex_tree *node, struct parts *p)
 	free(p->user_component_name);
 	p->user_component_name = NULL;
 	if (type == PACTEX_EPT_USER_COMPONENT) {
-		const char *uc = pactex_get_exact_string(type_info,
+		const char *uc = pactex_dual_opt_string(type_info,
+			"\x83\x86\x81\x5b\x83\x55\x83\x52\x83\x93\x83\x7c\x81\x5b\x83\x6c\x83\x93\x83\x67\x96\xbc",
 			"\xa5\xe6\xa9\x60\xa5\xb6\xa5\xb3\xa5\xf3\xa5\xdd\xa9\x60\xa5\xcd\xa5\xf3\xa5\xc8\xc3\xfb");
-		if (!uc) uc = pactex_get_exact_string(type_info,
-			"\x83\x86\x81\x5b\x83\x55\x83\x52\x83\x93\x83\x7c\x81\x5b\x83\x6c\x83\x93\x83\x67\x96\xbc");
 		if (uc && uc[0])
 			p->user_component_name = strdup(uc);
-		/* 數據 (SJIS データ): a key, value, key, value, ... string list. */
-		struct ex_list *data = pactex_get_list(type_info, "\x94\xb5\x93\xfe");
-		if (!data) data = pactex_get_list(type_info, "\x83\x66\x81\x5b\x83\x5e");
+		/* データ / 數據: a key, value, key, value, ... string list. */
+		struct ex_list *data = pactex_dual_list(type_info, "\x83\x66\x81\x5b\x83\x5e", "\x94\xb5\x93\xfe");
 		for (unsigned i = 0; data && i + 1 < data->nr_items; i += 2) {
 			struct ex_value *k = &data->items[i].value, *v = &data->items[i + 1].value;
 			if (k->type == EX_STRING && v->type == EX_STRING && k->s && v->s)
@@ -3099,19 +3080,18 @@ static void end_key_erase(struct activity *act, int key)
 	act->nr_end_keys--;
 }
 
-/* 結束キー (GBK; the original's key 0x7db894). */
-static const char GBK_END_KEY[] = "\xbd\x59\xca\xf8\xa5\xad\xa9\x60";
+/* 終了キー / 結束キー (SJIS + GBK). */
+static const char SJIS_END_KEY[] = "\x8f\x49\x97\xb9\x83\x4c\x81\x5b"; /* 終了キー */
+static const char GBK_END_KEY[]  = "\xbd\x59\xca\xf8\xa5\xad\xa9\x60"; /* 結束キー */
 
 /* The end key block: the activity loader 0x560210 reads the list block
- * 結束キー (0x5603df..0x56046f), before the activity tree, and inserts each
- * item into the set; without the block there are none. An item is read as
- * an int with the default 0 (the list's vtable +0xc with (i, 0)); that a
- * non-int item reads as that 0 is inferred from the default. The pactex of
- * the game have (2, 27, 32) on the settings and the backlog, (2, 27) on the
- * scene backlog, and no block anywhere else. */
+ * 終了キー / 結束キー (0x5603df..0x56046f), before the activity tree, and inserts each
+ * item into the set; without the block there are none. */
 static void pactex_read_end_keys(struct activity *act, struct ex *ex)
 {
-	struct ex_list *keys = ex_get_list(ex, GBK_END_KEY);
+	struct ex_list *keys = ex_get_list(ex, SJIS_END_KEY);
+	if (!keys)
+		keys = ex_get_list(ex, GBK_END_KEY);
 	if (!keys)
 		return;
 	for (unsigned i = 0; i < keys->nr_items; i++) {
@@ -3456,10 +3436,10 @@ static bool PartsEngine_RemoveActivityParts(struct string *name, struct string *
 	return false;
 }
 
-static void PartsEngine_RemoveAllActivityParts(struct string *name)
+static bool PartsEngine_RemoveAllActivityParts(struct string *name)
 {
 	int idx = find_activity(name);
-	if (idx < 0) return;
+	if (idx < 0) return false;
 	struct activity *act = &activities[idx];
 	struct page *delegate_indices = NULL;
 	for (int i = 0; i < act->nr_parts; i++)
@@ -3469,6 +3449,7 @@ static void PartsEngine_RemoveAllActivityParts(struct string *name)
 		free_page(delegate_indices);
 	}
 	act->nr_parts = 0;
+	return true;
 }
 
 static int PartsEngine_NumofActivityParts(struct string *name)

@@ -134,7 +134,7 @@ static bool fnl_font_get_glyph(struct font_size *_size, struct glyph *glyph, uin
 {
 	struct fnl_font_size *size = (struct fnl_font_size*)_size;
 	unsigned index = fnl_char_to_index(code);
-	if (index > size->bitmap_size->nr_glyphs)
+	if (index >= size->bitmap_size->nr_glyphs)
 		return false;
 	if (!size->bitmap_size->face->glyphs[index].data_pos)
 		return false;
@@ -181,7 +181,7 @@ static float fnl_font_size_char(struct font_size *_size, uint32_t code)
 {
 	struct fnl_font_size *size = (struct fnl_font_size*)_size;
 	unsigned index = fnl_char_to_index(code);
-	if (index > size->bitmap_size->nr_glyphs)
+	if (index >= size->bitmap_size->nr_glyphs)
 		return 0.0;
 	if (!size->bitmap_size->face->glyphs[index].data_pos)
 		return 0.0;

@@ -986,6 +986,11 @@ static bool PE_v14_Save(int buf_slot)
 	return ok;
 }
 
+static bool PE_v14_Save_Compress(int buf_slot, possibly_unused bool compress)
+{
+	return PE_v14_Save(buf_slot);
+}
+
 static bool PE_v14_SaveWithoutHideParts(int buf_slot)
 {
 	struct page *buf = wrap_get_page(buf_slot, 0);
@@ -2194,7 +2199,8 @@ static void PartsEngine_PreLink(void)
 	fun = get_fun(libno, "Save");
 	if (fun && fun->nr_arguments >= 1
 			&& fun->arguments[0].type.data == AIN_WRAP) {
-		static_library_replace(&lib_PartsEngine, "Save", PE_v14_Save);
+		static_library_replace(&lib_PartsEngine, "Save",
+				fun->nr_arguments >= 2 ? (void *)PE_v14_Save_Compress : (void *)PE_v14_Save);
 		static_library_replace(&lib_PartsEngine, "SaveWithoutHideParts",
 				PE_v14_SaveWithoutHideParts);
 		static_library_replace(&lib_PartsEngine, "Load", PE_v14_Load);

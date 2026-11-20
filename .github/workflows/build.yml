@@ -14,8 +14,26 @@ jobs:
     - name: Install Deps
       run: sudo apt-get update && sudo apt-get install -y ninja-build flex bison
 
+    - name: Cache Native Build
+      uses: actions/cache@v4
+      with:
+        path: build/arm64-v8a
+        key: native-arm64-${{ runner.os }}-v1-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'build-shared-libs.sh', 'xsystem4/CMakeLists.txt', 'xsystem4/subprojects/libsys4/CMakeLists.txt') }}
+        restore-keys: |
+          native-arm64-${{ runner.os }}-v1-${{ hashFiles('CMakeLists.txt', 'cmake/**', 'build-shared-libs.sh') }}
+          native-arm64-${{ runner.os }}-v1-
+
     - name: Native Build
       run: ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME ./build-shared-libs.sh
+
+    - name: Cache Gradle
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+        key: gradle-${{ runner.os }}-${{ hashFiles('project/**/*.gradle*', 'project/gradle/wrapper/gradle-wrapper.properties') }}
+        restore-keys: gradle-${{ runner.os }}-
 
     - name: App Build
       run: |

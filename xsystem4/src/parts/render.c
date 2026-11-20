@@ -317,8 +317,33 @@ static void parts_render_texture(struct parts *parts, struct texture *texture, m
 	gfx_run_job(&job);
 }
 
+/*
+ * 描畫フィルタ covers the subtree (v14): a parts without its own filter is
+ * drawn with the nearest ancestor's. SceneLogo's Light has 描畫フィルタ 3 (screen)
+ * and its two pale yellow panels have 0; the original screens the panels, so
+ * the gloss shows only on the dark parts of the logo and nothing is left on
+ * the white background when it stops at X 904. Drawn with the normal blend,
+ * the panels were a yellow band across the screen. (Flat layers already take
+ * the parent's filter the same way, see render_flat_item.)
+ */
+static int parts_effective_draw_filter(struct parts *parts)
+{
+	// Seen only on v14 (both DohnaDohna releases); older engines keep
+	// drawing each parts with its own filter.
+	if (ain->version < 14)
+		return parts->draw_filter;
+	for (struct parts *p = parts; p; p = p->parent) {
+		if (p->draw_filter != PARTS_DRAW_FILTER_NORMAL)
+			return p->draw_filter;
+	}
+	return PARTS_DRAW_FILTER_NORMAL;
+}
+
 static void parts_render_text(struct parts *parts, struct parts_text *t, Point position)
 {
+	int draw_filter = parts_effective_draw_filter(parts);
+	set_draw_filter_blend_func(draw_filter);
+
 	vec3 add_color;
 	parts_shader_add_color(parts, add_color);
 	vec3 multiply_color = {
@@ -351,12 +376,14 @@ static void parts_render_text(struct parts *parts, struct parts_text *t, Point p
 			// The fade of a message window's character multiplies
 			// the alpha the parts is drawn with (0x5bd920).
 			float alpha = blend_rate * parts_message_window_glyph_alpha(parts, t, glyph_index++);
-			parts_render_texture(parts, &ch->t, mw_transform, &r, alpha, add_color, multiply_color, 0, parts->alpha_clipper_parts_no);
+			parts_render_texture(parts, &ch->t, mw_transform, &r, alpha, add_color, multiply_color, draw_filter, parts->alpha_clipper_parts_no);
 			x += ch->advance;
 		}
 		x = position.x;
 		y += line->height + t->line_space;
 	}
+	if (draw_filter != PARTS_DRAW_FILTER_NORMAL)
+		glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ZERO);
 }
 
 /* A message window's key wait mark: one texture at a position in the owner's
@@ -379,28 +406,6 @@ static void parts_render_message_mark(struct parts *parts, Texture *t, Point pos
 	Rectangle r = { 0, 0, t->w, t->h };
 	parts_render_texture(parts, t, mw_transform, &r, parts->global.alpha / 255.0,
 			add_color, multiply_color, 0, parts->alpha_clipper_parts_no);
-}
-
-/*
- * 描畫フィルタ covers the subtree (v14): a parts without its own filter is
- * drawn with the nearest ancestor's. SceneLogo's Light has 描畫フィルタ 3 (screen)
- * and its two pale yellow panels have 0; the original screens the panels, so
- * the gloss shows only on the dark parts of the logo and nothing is left on
- * the white background when it stops at X 904. Drawn with the normal blend,
- * the panels were a yellow band across the screen. (Flat layers already take
- * the parent's filter the same way, see render_flat_item.)
- */
-static int parts_effective_draw_filter(struct parts *parts)
-{
-	// Seen only on v14 (both DohnaDohna releases); older engines keep
-	// drawing each parts with its own filter.
-	if (ain->version < 14)
-		return parts->draw_filter;
-	for (struct parts *p = parts; p; p = p->parent) {
-		if (p->draw_filter != PARTS_DRAW_FILTER_NORMAL)
-			return p->draw_filter;
-	}
-	return PARTS_DRAW_FILTER_NORMAL;
 }
 
 /* A v14 scroll bar's track and knob (scrollbar.c): the original's inner
@@ -750,7 +755,7 @@ static void parts_render_flat(struct parts *parts, struct parts_flat *f)
 	ctx.alpha = parts->global.alpha / 255.0f;
 	glm_vec3_zero(ctx.add_color);
 	glm_vec3_one(ctx.mul_color);
-	ctx.draw_filter = PARTS_DRAW_FILTER_NORMAL;
+	ctx.draw_filter = parts_effective_draw_filter(parts);
 
 	struct flat_key_stack key_stack = { .count = 0 };
 	render_flat_layer(parts, f, f->root_state,

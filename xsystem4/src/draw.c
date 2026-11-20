@@ -184,7 +184,7 @@ static void _run_copy_shader(Shader *s, Texture *dst, Texture *src, GLfloat src_
 	GLfloat scale_y = (GLfloat)data->h / data->sh;
 
 	mat4 mw_transform = MAT4(
-	     src_w * scale_x, 0,               0, -data->sx * scale_y,
+	     src_w * scale_x, 0,               0, -data->sx * scale_x,
 	     0,               src_h * scale_y, 0, -data->sy * scale_y,
 	     0,               0,               1, 0,
 	     0,               0,               0, 1);

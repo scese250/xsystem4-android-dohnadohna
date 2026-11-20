@@ -148,8 +148,13 @@ static bool HashMap_Empty(int id)
 }
 
 // [7] bool Any(int id)
+bool HashMap_Any_NoKey(int id)
+{
+	struct hashmap *map = get_map(id);
+	return map && map->count > 0;
+}
+
 // [8] bool Any(int id, string key)
-// Both overloads map to same C function; when called with 1 arg, key is undefined.
 static bool HashMap_Any(int id, struct string *key)
 {
 	struct hashmap *map = get_map(id);

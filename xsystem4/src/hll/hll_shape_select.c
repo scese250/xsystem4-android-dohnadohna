@@ -24,11 +24,18 @@ void *pe_layoutbox_select_function(const struct ain_hll_function *f, void *dflt)
 void *pe_upper_left_select_function(const struct ain_hll_function *f, void *dflt);
 void *system_select_function(const struct ain_hll_function *f, void *dflt);
 void *kiwi_select_function(const struct ain_hll_function *f, void *dflt);
+bool HashMap_Any_NoKey(int id);
 
 void *hll_shape_select_function(const char *lib, const struct ain_hll_function *f, void *dflt)
 {
 	if (!lib || !f || !f->name || (f->nr_arguments > 0 && !f->arguments))
 		return dflt;
+	if (!strcmp(lib, "HashMap") && !strcmp(f->name, "Any")) {
+		if (f->nr_arguments == 1)
+			return HashMap_Any_NoKey;
+		if (f->nr_arguments == 2)
+			return dflt;
+	}
 	if (!strcmp(lib, "FileOperation"))
 		return fileoperation_select_function(f, dflt);
 	if (!strcmp(lib, "VSFile"))

@@ -3637,7 +3637,7 @@ static void parts_button_apply_cg(struct parts *parts)
 	const char *base = parts->button_cg_name;
 	if (!base)
 		return;
-	const char *const *suffix = strstr(base, "\xa3\xaf") ? gbk : sjis;
+	const char *const *suffix = game_charset_is_gbk() ? gbk : sjis;
 	char name[512];
 	bool disabled = false;
 	if (parts->button_disabled) {

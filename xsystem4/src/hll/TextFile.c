@@ -39,12 +39,10 @@ static bool TextFile_Close(int handle)
 	return true;
 }
 
-// GBK games pass GBK file names (for example under GetGameFolderPath); decode
-// them like every other game path. SJIS games keep the raw fopen.
+// Decode paths with unix_path() for both GBK and SJIS games so Windows
+// separators ('\') and SJIS/GBK characters work on Android/Linux.
 static FILE *text_file_open(struct string *fileName, const char *mode)
 {
-	if (!game_charset_is_gbk())
-		return fopen(fileName->text, mode);
 	char *path = unix_path(fileName->text);
 	FILE *fp = file_open_utf8(path, mode);
 	free(path);

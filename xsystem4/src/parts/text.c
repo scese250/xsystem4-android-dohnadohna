@@ -165,7 +165,9 @@ static const char *parts_text_append_char(struct parts_text *t, const char *str,
 	// Where the texture is drawn in its line: the cell on the line's bottom
 	// (v14 grid).
 	ch->off = (Point) { 0, grid ? line_height - height : 0 };
-	gfx_init_texture_rgba(&ch->t, width, height + edge, (SDL_Color){0,0,0,0});
+	SDL_Color bg = text_style_has_edge(&t->ts) ? t->ts.edge_color : t->ts.color;
+	bg.a = 0;
+	gfx_init_texture_rgba(&ch->t, width, height + edge, bg);
 	ch->advance = gfx_render_textf(&ch->t, 0, edge, ch->ch, &t->ts, false);
 
 	line->width += ch->advance;
