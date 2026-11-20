@@ -300,11 +300,7 @@ static void main_surface_init(int w, int h)
 
 	glGenTextures(1, &main_surface.handle);
 	glBindTexture(GL_TEXTURE_2D, main_surface.handle);
-#ifdef USE_GLES
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-#else
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, w, h, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
-#endif
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 	glBindTexture(GL_TEXTURE_2D, 0);
@@ -596,7 +592,9 @@ void gfx_swap(void)
 		.view_transform = wv_transform[0],
 		.data = view
 	};
+	glDisable(GL_BLEND);
 	gfx_render(&job);
+	glEnable(GL_BLEND);
 
 	uint64_t perf_swap_start = gfx_stage2_perf_begin_swap();
 	SDL_GL_SwapWindow(sdl.window);
@@ -795,11 +793,7 @@ void gfx_init_texture_rgb(struct texture *t, int w, int h, SDL_Color color)
 		h = max_texture_size;
 	}
 	init_texture(t, w, h);
-#ifdef USE_GLES
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-#else
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, w, h, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
-#endif
 	if (w <= 0 || h <= 0)
 		return;
 	GLuint fbo = gfx_set_framebuffer(GL_DRAW_FRAMEBUFFER, t, 0, 0, w, h);
@@ -834,11 +828,7 @@ void gfx_init_texture_blank(struct texture *t, int w, int h)
 void gfx_copy_main_surface(struct texture *dst)
 {
 	init_texture(dst, main_surface.w, main_surface.h);
-#ifdef USE_GLES
-	glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 0, 0, main_surface.w, main_surface.h, 0);
-#else
 	glCopyTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 0, 0, main_surface.w, main_surface.h, 0);
-#endif
 }
 
 void gfx_delete_texture(struct texture *t)
