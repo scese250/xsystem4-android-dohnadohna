@@ -1,0 +1,118 @@
+/* Copyright (C) 2019 Nunuhara Cabbage <nunuhara@haniwa.technology>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, see <http://gnu.org/licenses/>.
+ */
+
+#ifndef SYSTEM4_MIXER_H
+#define SYSTEM4_MIXER_H
+
+#include <stdbool.h>
+
+struct bgi {
+	int no;
+	int loop_count;
+	int loop_start;
+	int loop_end;
+	int channel;
+	int volume;
+};
+
+struct wai {
+	//int uk1;
+	//int uk2;
+	int channel;
+	//int uk3; // version 4+
+};
+
+void bgi_read(const char *path);
+struct bgi *bgi_get(int no);
+void wai_load(const char *path);
+struct wai *wai_get(int no);
+
+void mixer_init(void);
+int mixer_get_numof(void);
+const char *mixer_get_name(int n);
+int mixer_set_name(int n, const char *name);
+int mixer_get_volume(int n, int *volume);
+int mixer_set_volume(int n, int volume);
+int mixer_get_mute(int n, int *mute);
+int mixer_set_mute(int n, int mute);
+
+// v14 sound groups (audio_mixer.c): exactly AIN v14, the GBK string rule and
+// the group table of the main EX file; false for every other game.
+bool mixer_groups_enabled(void);
+int mixer_group_fallback(bool streaming);
+int mixer_get_default_volume(int n, int *volume);
+float mixer_group_gain(int n);
+void mixer_set_global_focus(bool on);
+void mixer_set_window_focus(bool active);
+// Writes Volume.sav (with groups only).
+void mixer_groups_save(void);
+
+// A stream's handle (the master mixer's voice, or a group's) goes to
+// mixer_stream_set_volume and mixer_stream_stop.
+struct sts_mixer_stream_t;
+int mixer_stream_play(struct sts_mixer_stream_t* stream, int volume);
+// With groups: in `group` (from mixer_movie_sound_set), with the movies'
+// internal volume; without them, or for a group of -1, mixer_stream_play.
+int mixer_stream_play_group(struct sts_mixer_stream_t *stream, int volume, int group);
+bool mixer_stream_set_volume(int handle, int volume);
+void mixer_stream_stop(int handle);
+// A parts movie's SoundID and SoundGroup (with groups only; -1 without):
+// returns the group its sound plays in, which GetGroupNum gives for the ID
+// until the owner is released or another movie takes the ID.
+int mixer_movie_sound_set(int id, int group, const void *owner);
+void mixer_movie_sound_release(const void *owner);
+int mixer_movie_sound_group(int id);
+
+struct archive_data;
+// The length of a sound file's data in ms (GetLengthFromFile); 0 when it is
+// neither a WAV nor an Ogg Vorbis file.
+int mixer_data_length_ms(struct archive_data *dfile);
+struct channel;
+enum asset_type;
+
+struct channel *channel_open(enum asset_type type, int no);
+// With groups, a file without a timemap row goes to group 1 when `streaming`
+// is set (Prepare's bStreaming) and to group 2 when it is not.
+struct channel *channel_open_streaming(enum asset_type type, int no, bool streaming);
+int channel_get_group(struct channel *ch);
+// Takes ownership of dfile.
+struct channel *channel_open_archive_data(struct archive_data *dfile);
+struct channel *channel_open_file(const char *path);
+void channel_close(struct channel *ch);
+int channel_play(struct channel *ch);
+int channel_stop(struct channel *ch);
+int channel_is_playing(struct channel *ch);
+int channel_set_loop_count(struct channel *ch, int count);
+int channel_get_loop_count(struct channel *ch);
+int channel_set_loop_start_pos(struct channel *ch, int pos);
+int channel_set_loop_end_pos(struct channel *ch, int pos);
+int channel_fade(struct channel *ch, int time, int volume, bool stop);
+int channel_stop_fade(struct channel *ch);
+int channel_is_fading(struct channel *ch);
+int channel_pause(struct channel *ch);
+int channel_restart(struct channel *ch);
+int channel_is_paused(struct channel *ch);
+int channel_get_pos(struct channel *ch);
+int channel_get_length(struct channel *ch);
+int channel_get_sample_pos(struct channel *ch);
+int channel_get_sample_length(struct channel *ch);
+int channel_seek(struct channel *ch, int pos);
+int channel_reverse_LR(struct channel *ch);
+int channel_get_volume(struct channel *ch);
+int channel_get_time_length(struct channel *ch);
+int channel_get_data_no(struct channel *ch);
+
+#endif /* SYSTEM4_MIXER_H */

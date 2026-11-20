@@ -118,14 +118,24 @@ ExternalProject_Add(
 )
 
 ExternalProject_Add(
-  libdeflate
-  URL https://github.com/ebiggers/libdeflate/releases/download/v1.25/libdeflate-1.25.tar.gz
-  URL_HASH SHA1=7e70557d094b54c3ee16f6c012976dc8d685b22a
-  CMAKE_ARGS ${COMMON_CMAKE_ARGS}
-             -DCMAKE_POLICY_VERSION_MINIMUM=3.5
-             -DLIBDEFLATE_BUILD_SHARED_LIB=OFF
-             -DLIBDEFLATE_GZIP_SUPPORT=OFF
-             -DLIBDEFLATE_BUILD_GZIP=OFF
+  libiconv
+  URL https://ftp.gnu.org/pub/gnu/libiconv/libiconv-1.18.tar.gz
+  URL_HASH SHA256=3b08f5f4f9b4eb82f151a7040bfd6fe6c6fb922efe4b1659c66ea933276965e8
+  CONFIGURE_COMMAND <SOURCE_DIR>/configure
+    --host ${CMAKE_C_COMPILER_TARGET}
+    --prefix=${stagingDir}
+    --disable-shared
+    --enable-static
+    --disable-nls
+    --disable-dependency-tracking
+    AR=${CMAKE_AR}
+    CC=${TARGET_CC}
+    LD=${CMAKE_ANDROID_NDK_TOOLCHAIN_UNIFIED}/bin/ld
+    RANLIB=${CMAKE_RANLIB}
+    STRIP=${CMAKE_STRIP}
+    CFLAGS=-fPIC
+  BUILD_COMMAND make -j4
+  INSTALL_COMMAND make install
 )
 
 ExternalProject_Add_StepDependencies(libsndfile configure libvorbis)
@@ -134,12 +144,13 @@ ExternalProject_Add(
   xsystem4
   SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/xsystem4
   CMAKE_ARGS ${COMMON_CMAKE_ARGS}
+             -DCMAKE_POLICY_VERSION_MINIMUM=3.5
              -DCMAKE_MODULE_PATH=${CMAKE_CURRENT_LIST_DIR}/cmake
   BUILD_ALWAYS YES
 )
 
 ExternalProject_Add_StepDependencies(xsystem4 configure
-  libjpeg-turbo libwebp libpng libffi libsndfile libdeflate)
+  libjpeg-turbo libwebp libpng libffi libsndfile libiconv)
 
 
 install(

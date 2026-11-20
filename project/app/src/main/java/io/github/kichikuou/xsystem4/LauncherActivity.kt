@@ -1,27 +1,39 @@
 package io.github.kichikuou.xsystem4
 
+import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.Dialog
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Color
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
+import android.provider.Settings
 import android.text.Html
+import android.text.InputType
 import android.view.LayoutInflater
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
+import android.widget.EditText
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
+import android.widget.Toast
+import java.io.File
 
 private const val ICON_SIZE_DP = 40
 private const val INSTALL_REQUEST = 1
+private const val STORAGE_PERMISSION_REQUEST = 2
 
 private class GameListAdapter(activity: Activity, private val gameList: GameList) : BaseAdapter() {
     companion object {
@@ -59,11 +71,13 @@ class LauncherActivity : Activity(), GameListObserver {
     private lateinit var gameList: GameList
     private lateinit var adapter: GameListAdapter
     private var progressDialog: Dialog? = null
+    private var lastStorageAccessGranted: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.launcher)
 
+        lastStorageAccessGranted = hasAllFilesAccess()
         gameList = getGameList(refresh = false)
         gameList.observer = this
         adapter = GameListAdapter(this, gameList)
@@ -79,6 +93,27 @@ class LauncherActivity : Activity(), GameListObserver {
             onItemLongClick(listView.adapter.getItem(pos) as Item)
         }
         renderInstallState(gameList.installState)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val granted = hasAllFilesAccess()
+        if (granted != lastStorageAccessGranted) {
+            lastStorageAccessGranted = granted
+            setGameList(getGameList(refresh = true))
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == STORAGE_PERMISSION_REQUEST) {
+            lastStorageAccessGranted = hasAllFilesAccess()
+            setGameList(getGameList(refresh = true))
+        }
     }
 
     override fun onDestroy() {
@@ -102,6 +137,14 @@ class LauncherActivity : Activity(), GameListObserver {
         return when (item.itemId) {
             R.id.refresh -> {
                 setGameList(getGameList(refresh = true))
+                true
+            }
+            R.id.add_game_folder -> {
+                showAddGameFolderDialog()
+                true
+            }
+            R.id.grant_storage_access -> {
+                requestAllFilesAccess()
                 true
             }
             R.id.install_from_zip -> {
@@ -186,6 +229,26 @@ class LauncherActivity : Activity(), GameListObserver {
     }
 
     private fun onItemLongClick(item: Item): Boolean {
+        if (item.customPathRoot != null) {
+            AlertDialog.Builder(this)
+                .setTitle(R.string.uninstall_dialog_title)
+                .setMessage(getString(R.string.remove_custom_folder_message, item.customPathRoot))
+                .setPositiveButton(R.string.ok) { _, _ ->
+                    CustomGamePaths.removeCustomPath(this, item.customPathRoot)
+                    setGameList(getGameList(refresh = true))
+                }
+                .setNegativeButton(R.string.cancel, null)
+                .show()
+            return true
+        }
+        if (item.isDirectExternal) {
+            Toast.makeText(
+                this,
+                getString(R.string.external_uninstall_notice, item.path.parentFile?.path ?: item.path.path),
+                Toast.LENGTH_LONG
+            ).show()
+            return true
+        }
         AlertDialog.Builder(this).setTitle(R.string.uninstall_dialog_title)
             .setMessage(getString(R.string.uninstall_dialog_message, item.name))
             .setPositiveButton(R.string.ok) {_, _ ->
@@ -195,6 +258,133 @@ class LauncherActivity : Activity(), GameListObserver {
             .setNegativeButton(R.string.cancel) {_, _ -> }
             .show()
         return true
+    }
+
+    private fun hasAllFilesAccess(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
+    }
+
+    private fun requestAllFilesAccess() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (Environment.isExternalStorageManager()) {
+                Toast.makeText(this, R.string.storage_access_already_granted, Toast.LENGTH_SHORT).show()
+                setGameList(getGameList(refresh = true))
+                return
+            }
+            try {
+                val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                intent.data = Uri.parse("package:$packageName")
+                startActivity(intent)
+            } catch (e: ActivityNotFoundException) {
+                val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                startActivity(intent)
+            }
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (hasAllFilesAccess()) {
+                Toast.makeText(this, R.string.storage_access_already_granted, Toast.LENGTH_SHORT).show()
+                setGameList(getGameList(refresh = true))
+            } else {
+                requestPermissions(
+                    arrayOf(
+                        Manifest.permission.READ_EXTERNAL_STORAGE,
+                        Manifest.permission.WRITE_EXTERNAL_STORAGE
+                    ),
+                    STORAGE_PERMISSION_REQUEST
+                )
+            }
+        } else {
+            Toast.makeText(this, R.string.storage_access_already_granted, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun showAddGameFolderDialog() {
+        val pad = (20 * resources.displayMetrics.density).toInt()
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(pad, pad / 2, pad, 0)
+        }
+        val editText = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            setSingleLine(true)
+            setText(getString(R.string.add_folder_hint))
+            setSelection(text.length)
+        }
+        container.addView(editText)
+
+        val builder = AlertDialog.Builder(this)
+            .setTitle(R.string.add_folder_dialog_title)
+            .setMessage(R.string.add_folder_dialog_message)
+            .setView(container)
+            .setPositiveButton(R.string.add_folder_button_add, null)
+            .setNegativeButton(R.string.cancel, null)
+
+        if (CustomGamePaths.getCustomPaths(this).isNotEmpty()) {
+            builder.setNeutralButton(R.string.add_folder_button_manage) { _, _ ->
+                showManageCustomFoldersDialog()
+            }
+        }
+
+        val dialog = builder.create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val rawPath = editText.text.toString().trim()
+                if (rawPath.isEmpty()) {
+                    editText.error = getString(R.string.add_folder_error_empty)
+                    return@setOnClickListener
+                }
+                val dir = File(rawPath)
+                if (!dir.exists() || !dir.isDirectory) {
+                    editText.error = if (!hasAllFilesAccess()) {
+                        getString(R.string.add_folder_error_not_readable)
+                    } else {
+                        getString(R.string.add_folder_error_not_found)
+                    }
+                    return@setOnClickListener
+                }
+                if (!dir.canRead()) {
+                    editText.error = getString(R.string.add_folder_error_not_readable)
+                    return@setOnClickListener
+                }
+                if (!GameList.isValidGameOrParentDirectory(dir)) {
+                    editText.error = getString(R.string.add_folder_error_no_games)
+                    return@setOnClickListener
+                }
+                val canonical = CustomGamePaths.canonicalOrAbsolute(dir)
+                val added = CustomGamePaths.addCustomPath(this, canonical)
+                Toast.makeText(
+                    this,
+                    if (added) getString(R.string.add_folder_added, canonical) else getString(R.string.add_folder_already_added),
+                    Toast.LENGTH_SHORT
+                ).show()
+                setGameList(getGameList(refresh = true))
+                dialog.dismiss()
+            }
+        }
+        dialog.show()
+    }
+
+    private fun showManageCustomFoldersDialog() {
+        val paths = CustomGamePaths.getCustomPaths(this)
+        if (paths.isEmpty()) return
+        val keep = BooleanArray(paths.size) { true }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.manage_folders_dialog_title)
+            .setMultiChoiceItems(paths.toTypedArray(), keep) { _, which, isChecked ->
+                keep[which] = isChecked
+            }
+            .setPositiveButton(R.string.ok) { _, _ ->
+                val remaining = paths.filterIndexed { index, _ -> keep[index] }
+                CustomGamePaths.setCustomPaths(this, remaining)
+                setGameList(getGameList(refresh = true))
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
     }
 
     private fun renderInstallState(state: InstallState) {

@@ -1,0 +1,1248 @@
+/* Copyright (C) 2019 Nunuhara Cabbage <nunuhara@haniwa.technology>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, see <http://gnu.org/licenses/>.
+ */
+
+#ifndef SYSTEM4_PARTS_INTERNAL_H
+#define SYSTEM4_PARTS_INTERNAL_H
+
+#include <limits.h>
+#include <cglm/types.h>
+#include "gfx/gfx.h"
+#include "gfx/font.h"
+#include "queue.h"
+#include "scene.h"
+#include "swf.h"
+
+typedef struct cJSON cJSON;
+struct string;
+struct hash_table;
+struct parts_message_window;
+
+// v14: the sound names of a parts (struct parts, sound_names).
+#define PARTS_NR_SOUND_NAMES 4
+
+// NOTE: actual value is +1
+enum parts_state_type {
+	PARTS_STATE_DEFAULT = 0,
+	PARTS_STATE_HOVERED = 1,
+	PARTS_STATE_CLICKED = 2,
+#define PARTS_NR_STATES 3
+};
+
+enum parts_motion_type {
+	PARTS_MOTION_POS,
+	PARTS_MOTION_ALPHA,
+	PARTS_MOTION_CG,
+	PARTS_MOTION_HGAUGE_RATE,
+	PARTS_MOTION_VGAUGE_RATE,
+	PARTS_MOTION_NUMERAL_NUMBER,
+	PARTS_MOTION_MAG_X,
+	PARTS_MOTION_MAG_Y,
+	PARTS_MOTION_ROTATE_X,
+	PARTS_MOTION_ROTATE_Y,
+	PARTS_MOTION_ROTATE_Z,
+	PARTS_MOTION_VIBRATION_SIZE
+#define PARTS_NR_MOTION_TYPES (PARTS_MOTION_VIBRATION_SIZE+1)
+};
+
+union parts_motion_param {
+	int i;
+	float f;
+	struct {
+		int x;
+		int y;
+	};
+};
+
+enum parts_motion_curve {
+	PARTS_MOTION_CURVE_LINEAR = 0,
+	PARTS_MOTION_CURVE_EASE_IN,
+	PARTS_MOTION_CURVE_EASE_OUT,
+	PARTS_MOTION_CURVE_EASE_IN_OUT,
+	PARTS_MOTION_CURVE_CUBIC_IN,
+	PARTS_MOTION_CURVE_CUBIC_OUT,
+	PARTS_MOTION_CURVE_CUBIC_IN_OUT,
+};
+
+struct parts_motion {
+	TAILQ_ENTRY(parts_motion) entry;
+	enum parts_motion_type type;
+	enum parts_motion_curve curve;
+	union parts_motion_param begin;
+	union parts_motion_param end;
+	int begin_time;
+	int end_time;
+};
+
+TAILQ_HEAD(parts_motion_list, parts_motion);
+
+struct sound_motion {
+	TAILQ_ENTRY(sound_motion) entry;
+	int begin_time;
+	int sound_no;
+	bool played;
+};
+
+struct parts_text_char {
+	Texture t;
+	char ch[5];
+	float advance;
+	Point off; // of the texture from the pen position on its line
+};
+
+struct parts_text_line {
+	struct parts_text_char *chars;
+	int nr_chars;
+	unsigned height;
+	float width;
+};
+
+enum parts_type {
+	PARTS_UNINITIALIZED,
+	PARTS_CG,
+	PARTS_TEXT,
+	PARTS_ANIMATION,
+	PARTS_NUMERAL,
+	PARTS_HGAUGE,
+	PARTS_VGAUGE,
+	PARTS_CONSTRUCTION_PROCESS,
+	PARTS_FLASH,
+	PARTS_FLAT,
+	PARTS_MOVIE,
+	PARTS_RECT_DETECTION,
+	PARTS_LAYOUT_BOX,
+	PARTS_3DLAYER,
+#define PARTS_NR_TYPES (PARTS_3DLAYER+1)
+};
+
+struct parts_common {
+	Texture texture;
+	// Lazily read alpha for immutable CG textures; reset on replacement.
+	uint8_t *hit_mask;
+	int w, h;
+	Point origin_offset;
+	Rectangle hitbox;
+	Rectangle surface_area;
+};
+
+struct parts_cg {
+	struct parts_common common;
+	int no;
+	struct string *name;
+};
+
+struct parts_text {
+	struct parts_common common;
+	unsigned nr_lines;
+	struct parts_text_line *lines;
+	int line_space;
+	struct { float x; int y; } cursor;
+	struct text_style ts;
+};
+
+struct parts_animation {
+	struct parts_common common;
+	struct string *cg_name;
+	unsigned start_no;
+	unsigned nr_frames;
+	Texture *frames;
+	unsigned frame_time;
+	unsigned elapsed;
+	unsigned current_frame;
+};
+
+enum parts_numeral_font_type {
+	// each digit has a separate CG (only first CG number stored in `cg_no` member)
+	PARTS_NUMERAL_FONT_SEPARATE = 0,
+	// digits packed into single CG
+	PARTS_NUMERAL_FONT_COMBINED = 1,
+	// each digit has a separate CG (CG numbers stored in `width` member)
+	PARTS_NUMERAL_FONT_SEPARATE2 = 2,
+};
+
+struct parts_numeral_font {
+	enum parts_numeral_font_type type;
+	int cg_no;
+	int width[12];
+	Texture cg[12];
+};
+
+// v14 表示タイプ (the numeral's type byte, 0x5b3e80 +0x28)
+enum parts_numeral_show_type {
+	PARTS_NUMERAL_SHOW_CG = 0,        // a CG per character (ＣＧ名 is its format)
+	PARTS_NUMERAL_SHOW_LINKED_CG = 1, // the characters side by side in one CG (幅リスト)
+	PARTS_NUMERAL_SHOW_FONT = 2,      // drawn with the numeral's font
+};
+
+// The most digits a v14 numeral is padded to (桁數); the original has no limit.
+#define PARTS_NUMERAL_MAX_LENGTH 32
+
+struct parts_numeral {
+	struct parts_common common;
+	bool have_num;
+	int num;
+	int space;
+	int show_comma;
+	int length;
+	int font_no;
+	// v14 表示タイプ (enum parts_numeral_show_type); before v14 the CG font
+	// `font_no` draws the number.
+	int show_type;
+	// v14 ゼロパディング (SetNumeralShowPadding): the leading zeros are drawn.
+	// Hidden ones keep their cells (0x5b5188).
+	bool zero_pad;
+	bool full_pitch; // 全角: full-width digits
+	struct text_style font;
+	// v14: ＣＧ名 and 幅リスト, kept as they were given (the getters return
+	// them whatever the type is).
+	struct string *cg_name;
+	int cg_widths[12];
+	// v14: read from a save with no CG font. XPE 8 keeps neither the
+	// 表示タイプ, the font nor the ＣＧ名, so the numeral cannot be built
+	// again; it keeps the size it was saved with until the script gives
+	// its type.
+	bool unknown_type;
+};
+
+struct parts_gauge {
+	struct parts_common common;
+	Texture cg;
+	int cg_no;
+	float rate;
+	// v14 keeps the operands, not just their quotient (0x566b40).
+	float numerator, denominator;
+	bool reverse;
+	struct string *cg_name;
+};
+
+// Serialized in save data. Do not reorder.
+enum parts_cp_op_type {
+	PARTS_CP_CREATE,
+	PARTS_CP_CREATE_PIXEL_ONLY,
+	PARTS_CP_CG,
+	PARTS_CP_FILL,
+	PARTS_CP_FILL_ALPHA_COLOR,
+	PARTS_CP_FILL_AMAP,
+	PARTS_CP_DRAW_RECT,
+	PARTS_CP_DRAW_CUT_CG,
+	PARTS_CP_COPY_CUT_CG,
+	PARTS_CP_DRAW_TEXT,
+	PARTS_CP_COPY_TEXT,
+	PARTS_CP_GRAY_FILTER,
+	PARTS_CP_FILL_WITH_ALPHA,
+	PARTS_CP_FILL_PIE_AMAP,
+	// The values are saved: new types go at the end. Those below work on
+	// the surface's pixels (struct parts_cp_pixel).
+	PARTS_CP_MUL_AMAP_GRADATION_ROWS,
+	PARTS_CP_MUL_AMAP_GRADATION_COLUMNS,
+	PARTS_CP_BLUR_H,
+	PARTS_CP_BLUR_V,
+	PARTS_CP_FILL_CIRCLE_AMAP,
+	PARTS_CP_FILL_CIRCLE_BLEND,
+	PARTS_CP_FILL_POLYGON_BLEND,
+	PARTS_CP_TILE_CG,
+	PARTS_CP_DRAW_CIRCLE_AMAP,
+	// The text commands that write the alpha (v14 commands 23 and 24;
+	// struct parts_cp_text, as PARTS_CP_DRAW_TEXT). Saved since XPE
+	// version 9.
+	PARTS_CP_ALPHA_BLEND_TEXT,
+	PARTS_CP_ONLY_ALPHA_TEXT,
+	// The blending fill and the gray scale as the v14 commands 4 and 15
+	// compute them, on the surface's pixels (struct parts_cp_pixel). Saved
+	// since XPE version 10.
+	PARTS_CP_BLEND_FILL,
+	PARTS_CP_GRAY_SCALE,
+	// The polygon fills that write what they cover instead of blending it
+	// (v14 commands 94 and 95; struct parts_cp_pixel, as
+	// PARTS_CP_FILL_POLYGON_BLEND). Saved since XPE version 11.
+	PARTS_CP_FILL_POLYGON_PIXEL_AMAP,
+	PARTS_CP_FILL_POLYGON_AMAP,
+	// The scaled copy of a whole CG as v14 command 14 makes it, on the
+	// surface's pixels (struct parts_cp_cut_cg, as PARTS_CP_COPY_CUT_CG).
+	// Saved since XPE version 12.
+	PARTS_CP_SCALE_COPY_CG,
+	// The copy of a cut of a CG (v14 command 12) and the blend of a cut of
+	// a CG scaled (v14 command 13), on the surface's pixels (struct
+	// parts_cp_cut_cg, as PARTS_CP_COPY_CUT_CG). Saved since XPE version 13.
+	PARTS_CP_CUT_CG_COPY,
+	PARTS_CP_CUT_CG_SCALE_BLEND,
+	// The discs of v14 commands 103 and 107 and the sector of 121, each
+	// fitted to a rectangle, on the surface's pixels (struct
+	// parts_cp_pixel). Saved since XPE version 14.
+	PARTS_CP_FILL_CIRCLE_AMAP_IN_RECT,
+	PARTS_CP_FILL_CIRCLE_BLEND_IN_RECT,
+	PARTS_CP_FILL_PIE_IN_RECT,
+#define PARTS_NR_CP_TYPES (PARTS_CP_FILL_PIE_IN_RECT+1)
+};
+// What XPE versions 11 to 14 saves hold for the types added last.
+_Static_assert(PARTS_CP_FILL_POLYGON_PIXEL_AMAP == 27 && PARTS_CP_FILL_POLYGON_AMAP == 28
+		&& PARTS_CP_SCALE_COPY_CG == 29 && PARTS_CP_CUT_CG_COPY == 30
+		&& PARTS_CP_CUT_CG_SCALE_BLEND == 31 && PARTS_CP_FILL_CIRCLE_AMAP_IN_RECT == 32
+		&& PARTS_CP_FILL_CIRCLE_BLEND_IN_RECT == 33 && PARTS_CP_FILL_PIE_IN_RECT == 34,
+		"the values of enum parts_cp_op_type are saved");
+
+struct parts_cp_create {
+	int w;
+	int h;
+};
+
+struct parts_cp_cg {
+	int no;
+};
+
+struct parts_cp_fill {
+	int x, y, w, h;
+	int r, g, b, a;
+};
+
+struct parts_cp_cut_cg {
+	int cg_no;
+	int dx, dy, dw, dh;
+	int sx, sy, sw, sh;
+	int interp_type;
+};
+
+struct parts_cp_text {
+	struct string *text;
+	int x, y;
+	int line_space;
+	struct text_style style;
+};
+
+struct parts_cp_filter {
+	int x, y, w, h;
+	bool full_size;
+};
+
+// A sector of the ellipse with radii (rx, ry) around (x, y), from `start`
+// over `sweep` degrees; `angle` rotates it. Larger radii are not built
+// (xsystem4's limit; the largest in a known game is 16).
+#define PARTS_CP_PIE_MAX_RADIUS 1024
+struct parts_cp_pie {
+	int x, y;
+	int rx, ry;
+	int start, sweep;
+	int a;
+	int angle;
+};
+
+// The commands that work on the surface's pixels; each uses the fields its
+// native step does:
+//   MUL_AMAP_GRADATION_ROWS / _COLUMNS (v14 commands 25 / 26): the rectangle
+//     (or `full`), the alpha `a` at its first line and `a2` after its last
+//     (a panel's fade also keeps its edge + 1 in `line_width`);
+//   BLUR_H / BLUR_V (27 / 28): the rectangle (or `full`) and `radius`;
+//   FILL_CIRCLE_AMAP / _BLEND (102 / 106): the centre (x, y), `radius` and
+//     the alpha `a`, with the colour for the blend;
+//   FILL_POLYGON_BLEND (97): `points` (x0, y0, x1, y1, ...) and the colour;
+//   TILE_CG (129): the rectangle (or `full`) and `cg_no`;
+//   DRAW_CIRCLE_AMAP (52): the centre (x, y), `radius`, `line_width` and
+//     the alpha `a`;
+//   BLEND_FILL (4): the rectangle (or `full`), the colour and the alpha `a`;
+//   GRAY_SCALE (15): the rectangle (or `full`);
+//   FILL_POLYGON_PIXEL_AMAP / _AMAP (94 / 95): `points`, with the colour
+//     and the alpha `a`, or the alpha alone;
+//   FILL_CIRCLE_AMAP_IN_RECT / _BLEND_IN_RECT (103 / 107): the rectangle
+//     (the disc's diameter is the larger of w and h) and the alpha `a`, with
+//     the colour for the blend;
+//   FILL_PIE_IN_RECT (121): the rectangle (the ellipse inside it), the
+//     colour and the alpha `a`; 開始角度 in `radius`, 移動角度 in
+//     `line_width` and 回転角度 in `a2`.
+// Larger circles, sectors and polygons are not built (xsystem4's limits).
+#define PARTS_CP_CIRCLE_MAX_RADIUS 1024
+#define PARTS_CP_POLYGON_MAX_POINTS 1024
+// The run of a disc's row dy that has a coverage (construction.c): 1 one
+// run, 0 none, -1 not one run.
+int parts_cp_circle_cells(int r, int dy, int *dx0, int *dx1);
+struct parts_cp_pixel {
+	int x, y, w, h;
+	bool full;
+	int r, g, b, a;
+	int a2;
+	int radius;
+	int cg_no;
+	int line_width;
+	int nr_points;
+	int *points;
+};
+
+struct parts_cp_op {
+	TAILQ_ENTRY(parts_cp_op) entry;
+	enum parts_cp_op_type type;
+	union {
+		struct parts_cp_create create;
+		struct parts_cp_cg cg;
+		struct parts_cp_fill fill;
+		struct parts_cp_cut_cg cut_cg;
+		struct parts_cp_text text;
+		struct parts_cp_filter filter;
+		struct parts_cp_pie pie;
+		struct parts_cp_pixel pixel;
+	};
+};
+
+struct parts_construction_process {
+	struct parts_common common;
+	TAILQ_HEAD(, parts_cp_op) ops;
+};
+
+// v14 パネル (component type 14): the size and colour its surface is built
+// from and アルファグラデーション, the widths of the fades of its top,
+// bottom, left and right edges, as the native widget keeps them (+0xa8/+0xac,
+// +0xb0..+0xbc, +0xc0..+0xcc; 200x200, (220,220,220,255) and no fades from
+// its constructor 0x4dc6f0). The surface is the normal state's construction:
+// Create, FillWithAlpha over all of it, then MulAMapGradation for each edge
+// that has a fade (the operation's line_width is the edge + 1). Not saved:
+// after a load the values are taken from those operations.
+struct parts_panel {
+	bool valid;
+	int w, h;
+	int r, g, b, a;
+	int grad[4];	// top, bottom, left, right
+};
+
+enum parts_flash_blend_mode {
+	PARTS_FLASH_BLEND_NORMAL0    = 0,
+	PARTS_FLASH_BLEND_NORMAL1    = 1,
+	PARTS_FLASH_BLEND_LAYER      = 2,
+	PARTS_FLASH_BLEND_MULTIPLY   = 3,
+	PARTS_FLASH_BLEND_SCREEN     = 4,
+	PARTS_FLASH_BLEND_LIGHTEN    = 5,
+	PARTS_FLASH_BLEND_DARKEN     = 6,
+	PARTS_FLASH_BLEND_DIFFERENCE = 7,
+	PARTS_FLASH_BLEND_ADD        = 8,
+	PARTS_FLASH_BLEND_SUBTRACT   = 9,
+	PARTS_FLASH_BLEND_INVERT     = 10,
+	PARTS_FLASH_BLEND_ALPHA      = 11,
+	PARTS_FLASH_BLEND_ERASE      = 12,
+	PARTS_FLASH_BLEND_OVERLAY    = 13,
+	PARTS_FLASH_BLEND_HARDLIGHT  = 14,
+};
+
+enum parts_draw_filter {
+	PARTS_DRAW_FILTER_NORMAL   = 0,
+	PARTS_DRAW_FILTER_ADDITIVE = 1,
+	PARTS_DRAW_FILTER_MULTIPLY = 2,
+	PARTS_DRAW_FILTER_SCREEN   = 3,
+};
+
+struct parts_flash_object {
+	TAILQ_ENTRY(parts_flash_object) entry;
+	uint16_t depth;
+	uint16_t character_id;
+	mat4 matrix;
+	struct swf_cxform_with_alpha color_transform;
+	enum parts_flash_blend_mode blend_mode;
+};
+
+struct parts_flash {
+	struct parts_common common;
+	struct string *name;
+	struct swf *swf;
+
+	struct swf_tag *tag;
+	bool has_ended;
+	bool stopped;
+	unsigned elapsed;
+	int current_frame;
+	struct hash_table *dictionary;
+	struct hash_table *bitmaps;  // bitmap character id -> struct texture *
+	struct hash_table *sprites;  // sprite character id -> struct parts_flash_object *
+	TAILQ_HEAD(, parts_flash_object) display_list;
+};
+
+struct flat_layer_state {
+	int current_frame;
+	bool stopped;
+	bool suppress_advance;
+	int jump_target;  // pending jump frame, -1 = none
+	// Per-timeline: last matched script key index for change detection
+	// (-2 = uninitialized, -1 = no match, >= 0 = key index)
+	int *last_script_keys;
+	// Per-timeline: child layer state (for TIMELINE libs), NULL otherwise
+	struct flat_layer_state **children;
+	size_t nr_timelines;
+};
+
+// Per-frame CG list for a STOP_MOTION library. lib_indices[k] is
+// the library index of the CG to display at frame k.
+struct flat_stop_motion_frames {
+	int *lib_indices;
+	int count;
+};
+
+struct parts_flat {
+	struct parts_common common;
+	struct string *name;
+	struct flat *flat;
+	bool stopped;
+	bool needs_advance;
+	unsigned elapsed;
+	int end_frame;
+	int pending_seek_delta;
+	struct flat_layer_state *root_state;
+	size_t nr_libraries;
+	Texture *textures;  // indexed by library index (only CG libs have valid textures)
+	// Indexed by library index. Only entries for STOP_MOTION libraries have lib_indices populated.
+	struct flat_stop_motion_frames *stop_motion_frames;
+};
+
+struct movie_context;
+
+struct parts_movie {
+	struct parts_common common;
+	int sprite_no;  // SACT sprite number used as movie render target
+	// v14 CreatePartsMovie: the movie, owned by this state (freed with it, as
+	// the original's movie component is), drawn into common.texture, which
+	// it owns when sprite_no < 0.
+	struct movie_context *mc;
+	bool playing;   // PlayPartsMovie was called
+};
+
+enum parts_layout_type {
+	PARTS_LAYOUT_FREE       = 0,  // no automatic layout
+	PARTS_LAYOUT_VERTICAL   = 1,
+	PARTS_LAYOUT_HORIZONTAL = 2,
+};
+
+// In AliceSoft's PartsEngine implementation, LayoutBox is a component type
+// that is NOT per-state. We store it per-state for uniformity with other
+// component types, but parts_get_layout_box() and all code in layoutbox.c
+// operate on states[0] only. This is safe as long as game scripts never
+// convert a LayoutBox parts to/from another component type.
+struct parts_layout_box {
+	struct parts_common common;
+	enum parts_layout_type layout_type;
+	bool wrap;
+	int wrap_size;
+	int align;
+	int padding_top;
+	int padding_bottom;
+	int padding_left;
+	int padding_right;
+};
+
+struct parts_3dlayer {
+	struct parts_common common;
+	int plugin;    // ReignEngine plugin handle (-1 = none)
+	int sprite_no; // SACT sprite used as render target
+};
+
+struct parts_state {
+	enum parts_type type;
+	union {
+		struct parts_common common;
+		struct parts_cg cg;
+		struct parts_text text;
+		struct parts_animation anim;
+		struct parts_numeral num;
+		struct parts_gauge gauge;
+		struct parts_construction_process cproc;
+		struct parts_flash flash;
+		struct parts_flat flat;
+		struct parts_movie movie;
+		struct parts_layout_box layout_box;
+		struct parts_3dlayer layer3d;
+	};
+};
+
+// v14 豎滾動條 (component type 2): what the widget scrolls (native +0x110
+// 全體スクロール量, +0x114 表示量, +0x118 スクロール位置, +0x11c スクロール
+// レート), the position and rate it last reported to its observers (+0xc4,
+// +0xc8), and the numbers of the parts whose height the two amounts follow
+// (+0x214 全體スクロール量サイズ連動, +0x218 表示量サイズ連動; 0 for none).
+// Its geometry (+0x100 長さ along the bar, +0x104 幅 across it, +0x108
+// 前サイズ, +0x10c 次サイズ, +0x120 按鈕點擊移動量); the names, the
+// pictures and the drag of its knob and track are in parts->scrollbar_look
+// (scrollbar.c). Not saved.
+struct parts_scrollbar {
+	int total;
+	int view;
+	int pos;
+	float rate;
+	int reported_pos;
+	float reported_rate;
+	int total_link;
+	int view_link;
+	int length;
+	int width;
+	int prev_size;
+	int next_size;
+	int button_move;
+};
+#define PARTS_COMPONENT_VSCROLLBAR 2
+// v14 橫滾動條 (component type 3): the same widget lying on its side (0x573610
+// clears its +0xc). Its amounts are kept, the library reads and writes its
+// rate and its position (pe_v14_checkbox.h), and it reports a move like the
+// vertical one (parts_scrollbar_update); its knob is drawn and dragged the
+// same way, along x.
+#define PARTS_COMPONENT_HSCROLLBAR 3
+
+// v14: the knob (バー, native +0xb0) and the track (背景, +0xa4) of a scroll
+// bar of either kind, which the original makes as two inner parts
+// (0x5743f0, 0x574470); here they are drawn by the bar's parts itself
+// (parts_render) and its input finds them (scrollbar.c). NULL until a
+// pactex gives the bar a ＣＧ名.
+struct parts_scrollbar_look {
+	char *cg_name;        // ＣＧ名 (+0x124)
+	char *over_bar_name;  // 覆蓋バーＣＧ名 (+0x16c)
+	char *over_bg_name;   // 覆蓋背景ＣＧ名 (+0x184)
+	bool dirty;           // the names changed: the pictures are loaded again
+	Texture bar[3];       // the knob's ／普通, ／オン, ／ダウン
+	Texture bg;           // the track
+	int bar_cg_length;    // the knob's CG along the bar; -1 without one
+	bool dragging;        // between the press on the knob or the track and its release
+	int drag_cursor;      // +0xb8: the cursor along the bar at the press
+	float drag_rate;      // +0xc0: the rate after the press
+	bool hovered;         // the cursor is on the knob
+};
+
+// v14: the font of a widget's text (the original's font object, constructor
+// 0x69f1d0: +4 type, +8 size, +0xc colour, +0x1c 太さ, +0x20 縁取り, +0x24
+// 縁取り色), which the check box and the button measure with 0x528aa0.
+struct parts_widget_font {
+	int type, size;
+	int r, g, b;
+	float bold, edge;
+	int edge_r, edge_g, edge_b;
+};
+
+// v14 檢查ボックス (component type 1): the widget's properties, as the
+// original keeps them from +0xe4 (constructor 0x529620, pactex 0x52bd70).
+// The original shows them through two inner parts, the box and the text;
+// here they are drawn into the parts' own three states (checkbox.c). Not
+// saved: the states are, the values come back when the activity is loaded.
+struct parts_checkbox {
+	int w, h;           // サイズ (+0xe8, +0xec): unused while there is a ＣＧ名
+	bool enable;        // 有効狀態 (+0xf0)
+	bool checked;       // 檢查狀態 (+0xf1)
+	int r, g, b;        // 按鈕の色 (+0xf4)
+	struct parts_widget_font font; // +0x100
+	char *cg_name;                // ＣＧ名 (+0x134)
+	char *over_cg_name;           // 覆蓋ＣＧ名 (+0x14c)
+	char *over_checked_cg_name;   // 覆蓋檢查ＣＧ名 (+0x164)
+	char *flat_name;              // フラット名 (+0x17c)
+	char *over_flat_name;         // 覆蓋フラット名 (+0x194)
+	char *over_checked_flat_name; // 覆蓋檢查フラット名 (+0x1ac)
+	char *text;                   // 文本 (+0x1c4)
+	int text_pos;       // 文本位置 (+0x1dc)
+	bool button_mode;   // 按鈕模式 (+0x1dd)
+	int char_space;     // 文字間隔 (+0x1e0)
+	int line_space;     // 行間隔 (+0x1e4)
+	bool dirty;         // +0x1e8: the states are to be rebuilt
+};
+#define PARTS_COMPONENT_CHECKBOX 1
+
+// v14 按鈕 (component type 0): the text the button draws on each of its
+// states, as the original keeps it beside the CG names (pactex 0x527910:
+// 文本 +0x1e4, font +0xc0, 文本位置 +0x1fc, 文字間隔 +0x200, 行間隔 +0x204).
+// NULL until a pactex gives the button a 文本 (only the GBK spelling of the
+// key is read). Not saved: the states are, as the constructions they are.
+struct parts_button_text {
+	char *text;         // NULL for ""
+	struct parts_widget_font font;
+	int text_pos;       // a byte: 1 .. 9 place the text, others put it at (0, 0)
+	int char_space;
+	int line_space;
+};
+
+// v14 ラジオ按鈕ボックス (component type 9): the numbers of its check boxes
+// (+0x44) and the flag that keeps it from handling a change it made itself
+// (+0x5c). It shows nothing. Not saved.
+struct parts_radio_box {
+	int *children;
+	int nr_children;
+	bool busy;
+};
+#define PARTS_COMPONENT_RADIO_BOX 9
+
+TAILQ_HEAD(parts_list, parts);
+
+struct parts_params {
+	int z;
+	Point pos;
+	bool show;
+	uint8_t alpha;
+	struct { float x, y; } scale;
+	struct { float x, y, z; } rotation;
+	SDL_Color add_color;
+	SDL_Color multiply_color;
+	// v14 SetComponentReverseLR/TB (native parts +0xaa/+0xa9). local: the
+	// parts' own flags; global: XOR of the flags along the parent chain.
+	bool reverse_lr;
+	bool reverse_tb;
+	// global only: the accumulated transform of the parts' anchor frame, as
+	// the original keeps one per parts (+0x250, written by 0x535260 ->
+	// 0x579bb0 -> 0x4e6d80): the parent's matrix, then this level's
+	// T(pos) * Rz * Rx * Ry * S(scale) * S(reverse) (column vectors; the
+	// original's row-vector product is S(reverse) * S(scale) * Ry * Rx * Rz
+	// * T(pos) * parent).
+	// `pos` is the matrix applied to the origin. Not saved: rebuilt from
+	// the local parameters along the parent chain.
+	mat4 matrix;
+	// global only (v14): the signed sum of the add colours along the parent
+	// chain, as the original keeps it (0x579bb0, +0x8c..+0x94; a parts in
+	// 減算色モード adds its own negated, 0x535260). add_color is what is
+	// drawn: the sum clamped to 0..255, or, when all three components are
+	// below 1, the negated sum with add_subtract set (0x5aac60, 0x5b2330).
+	// Not saved: rebuilt like the matrix.
+	int add_sum[3];
+	bool add_subtract;
+};
+
+// v14 element key history; zero initialization matches the native constructor.
+// The clock belongs to the whole table, not to each key. Not serialized.
+#define PARTS_V14_NR_KEYS 80
+struct parts_v14_keys {
+	bool down[PARTS_V14_NR_KEYS];
+	uint32_t elapsed;
+	int32_t threshold;
+};
+
+struct parts {
+	struct sprite sp;
+	enum parts_state_type state;
+	struct parts_state states[PARTS_NR_STATES];
+	TAILQ_ENTRY(parts) parts_list_entry;
+	TAILQ_ENTRY(parts) child_list_entry;
+	TAILQ_ENTRY(parts) dirty_list_entry;
+	struct parts_list children;
+	struct parts_params local;
+	struct parts_params global;
+	struct parts *parent;
+	int dirty;
+	int no;
+	int delegate_index;
+	int sprite_deform;
+	// v14: each state's CG flip (SpriteDeform: 1 left-right, 2 top-bottom).
+	// The original keeps it on the state's CG object (byte +0x20; set by
+	// 0x59c5b0 from Parts_SetPartsCG and from the pactex 変形, read back by
+	// Parts_GetPartsCGDeform 0x565540) and flips only that CG; a state that
+	// becomes a CG has a new object, with 0 (parts_get_cg). Written by
+	// PE_SetPartsCG and the v14 loader; drawn through parts_cg_deform.
+	// sprite_deform stays the last value set, which engines before v14 draw
+	// every state with.
+	int cg_deform[PARTS_NR_STATES];
+	bool clickable;
+	bool pass_cursor;
+	// v14: the component's own wheel flag (native +0x212). Effective
+	// wheelability also depends on type/focus. The native internal owner
+	// is not represented by the port's visual parent.
+	bool wheelable;
+	bool pixel_hittest;
+	bool lock_input_state;
+	bool want_save;
+	bool draggable;
+	// The sound archive's numbers of the cursor and the click sound, which
+	// the input plays (-1: none). v14: those of sound_names[2] and [3]
+	// (parts_set_sound_name); the number API of the engines before v14
+	// (SetPartsOnCursorSoundNumber, SetPartsClickSoundNumber) writes them
+	// directly.
+	int on_cursor_sound;
+	int on_click_sound;
+	// v14: the component's four sound names (native +0x1b0 + i * 0x18:
+	// Parts_SetSoundName 0x590230, the pactex オン指針音效 in 2 and 點擊音效
+	// in 3); NULL is "". The original plays 2 and 3 only (0x565200 hands
+	// its low-level parts slots 1..3, and only 2 and 3 get a CSound).
+	struct string *sound_names[PARTS_NR_SOUND_NAMES];
+	int origin_mode;
+	int pending_parent;
+	int linked_to;
+	int linked_from;
+	// v14: is_hovered is the original's +0x1ac (the cursor walk entered the
+	// element), hover_time its +0x1b0 (the time since it was entered: every
+	// input update adds the passed time to it, 0x546620, entering sets 0)
+	// and hover_pos its +0x1b8/+0x1bc (where the element last saw the
+	// cursor; a MouseMove goes out when the cursor is elsewhere, 0x577c7f).
+	// See v14_cursor_walk in input.c.
+	bool is_hovered;
+	int hover_time;
+	Point hover_pos;
+	struct parts_v14_keys v14_keys;
+	// v14 scrollbar Click uses the focused inner track, not the outer
+	// parts' clickable/hovered flags. Kept per parts for old-focus flush;
+	// no separate inner keyboard tables are represented here. Not saved.
+	bool v14_scrollbar_track_focus;
+	bool v14_scrollbar_track_entered;
+	int draw_filter;
+	// v14 減算色モード (SetComponentSubColorMode; pactex 減算色模式, stored as
+	// == 1 by 0x554020, native +0xc4): the parts' own add colour counts
+	// negative in the sum along the parent chain (parts_params.add_sum).
+	// MapNodeView's name and base blink yellow by subtracting (0, 0, c)
+	// from white. Saved since XPE version 8 (a list
+	// of parts numbers after the parts records).
+	bool sub_color_mode;
+	// v14 スピードアップ有効 (SetEnableSpeedUp 0x5909f0; pactex key read as
+	// == 1 by 0x554b75, default 1; native +0x22d, on in a new parts
+	// 0x550a9c), stored inverted so a new parts starts enabled: its update
+	// takes the scaled passed time of UpdateComponent instead of the passed
+	// time (0x5352b1). Only the message window reads it so far. Not saved
+	// here; the original's parts block carries it (+0x1a9, read back at
+	// 0x551ee9), as its message window block carries the text speed.
+	bool speed_up_disabled;
+	bool message_window;
+	// v14 MessageWindowEffectLink (native +0xae): the parts' own alpha and
+	// multiply colour take the message window rates (parts.c). Not saved.
+	bool message_window_effect_link;
+	struct parts_message_window *message;
+	int alpha_clipper_parts_no;
+	bool clip_enabled;
+	Rectangle clip_area;
+	int margin_top;
+	int margin_bottom;
+	int margin_left;
+	int margin_right;
+	// v14: the offset a free layout box gives each of its children, by its
+	// own origin mode and size (native +0x238/+0x23c, written by 0x5499e0).
+	// It is added to the position wherever the parts is placed (0x53567a,
+	// 0x537b2f). Not saved: the box lays out again after loading.
+	Point layout_offset;
+	struct parts_motion_list motion;
+	int controller_no;
+	int component_type;   // v14 component widget type (EPartsType)
+	// v14 low-level (EPartsType 18) state types recognized by the pactex
+	// loader (19 CG, 21 text, 24 numeral, 27 CG detection); 0 = none.
+	int component_state_type[PARTS_NR_STATES];
+	int unique_id;        // v14 unique ID for event dispatch
+	char *user_component_name; // v14 user component name from pactex (heap-allocated)
+	// v14 button widget: base CG name (<base>／普通 etc.) and the native
+	// enable flag (+0xb0, default enabled), stored inverted so a new parts
+	// starts enabled.
+	char *button_cg_name;
+	bool button_disabled;
+	struct parts_button_text *button_text;
+	// v14 user component data: key/value strings from the pactex 數據 list
+	// (Get/SetUserComponentData), stored as key0, value0, key1, value1, ...
+	char **uc_data;
+	int nr_uc_data;
+	// v14 pactex 編輯上表示 = 0: the parts and its subtree are never shown
+	// (folded into global.show). The native parts keeps it at +0xac beside
+	// 表示 (+0xab) and skips a parts unless both are set (e.g. 0x53c3c5).
+	bool edit_hidden;
+	// v14 pactex 構築部件 normal state whose steps the loader does not run:
+	// the canvas its first step creates (コマンド 0/1, 先矩形 W,H). The
+	// original builds it while loading, so a layout box sizes the parts by
+	// it; only used while the state has no size of its own (layoutbox.c).
+	int pactex_canvas_w, pactex_canvas_h;
+	struct parts_panel panel;
+	struct parts_scrollbar scrollbar;
+	struct parts_scrollbar_look *scrollbar_look;
+	// v14: what a 檢查ボックス and a ラジオ按鈕ボックス keep (checkbox.c); NULL
+	// until the parts is one and is first used as one.
+	struct parts_checkbox *checkbox;
+	struct parts_radio_box *radio_box;
+};
+
+#define PARTS_LIST_FOREACH(iter) TAILQ_FOREACH(iter, &parts_list, parts_list_entry)
+#define PARTS_LIST_FOREACH_REVERSE(iter) TAILQ_FOREACH_REVERSE(iter, &parts_list, parts_list, parts_list_entry)
+#define PARTS_FOREACH_CHILD(iter, parent) TAILQ_FOREACH(iter, &parent->children, child_list_entry)
+
+// parts.c
+extern struct parts_list parts_list;
+void parts_button_set_cg_name(struct parts *parts, const char *base);
+void parts_set_edit_hidden(struct parts *parts, bool hidden);
+void parts_uc_data_set(struct parts *parts, const char *key, const char *value);
+void parts_set_sound_name(struct parts *parts, int slot, const char *text, size_t len);
+void parts_set_show_link(struct parts *parts, int link_parts_no);
+bool parts_link_shown(struct parts *parts);
+const char *parts_uc_data_get(struct parts *parts, const char *key);
+
+// A controller is identified by its ID (parts->controller_no). Its position
+// in the stack (0 = bottom) decides the drawing order and changes when another
+// controller is inserted below it, removed or moved: the original manager
+// keeps a vector of controllers (+0x88) and finds one by the number of its
+// root parts (e.g. 0x53d480). Engines before v14 only push and pop, so there
+// the ID always equals the position. The system overlay controller lives
+// outside the stack.
+//
+// v14: the ID is the number of the controller's root parts (the original's
+// ctrl+4, whose number +0x40 every lookup compares). Each new parts is linked
+// under the root of the controller it goes to (0x578cb0 -> 0x53d1d0 ->
+// 0x53afb0: the new parts' parent number +0x13c becomes the root's number and
+// the root's child list +0xbc gets the new number), so Parent::get of a
+// top-level parts is its layer ID, the root's children are the layer's
+// top-level parts, and the root itself has no parent (its +0x13c stays 0: the
+// table's listener is off while 0x53d220 creates the two roots). The script
+// relies on all of that: AFL_Parts_GetLayerIDByParts walks Parent::get up to
+// 0 and returns the last number; AdvMessageWindow@SearchMessageBoxWindow
+// lists GetChild of the active layer's ID; CMessageWindow@OnErasingLayer
+// compares the walked ID with EraseLayer's. The root is not drawn, not hit
+// and not saved, and goes with its controller (0x53bea0 releases both roots).
+// The original takes the numbers from the free-number allocator (base
+// 1000010000, 0x539b13); here they come from their own range below the
+// numbers PE_GetFreeNumber hands out, which starts at 1000001000, so the
+// two never meet. The system overlay controller keeps its constant and has
+// no root parts (parts on it have no parent, as before).
+#define PARTS_CONTROLLER_STACK_MAX 10000
+#define PARTS_CONTROLLER_SYSTEM_OVERLAY PARTS_CONTROLLER_STACK_MAX
+#define PARTS_CONTROLLER_ID_BASE 1000000000
+
+struct parts_controller_stack {
+	int nr_controllers;
+	// The ID of the controller new parts go to,
+	// PARTS_CONTROLLER_SYSTEM_OVERLAY, or -1 when none is designated (v14:
+	// the top of the stack acts, the original's null pointer at +0x94).
+	int active;
+	int *ids;  // ids[position] is the ID of the controller there
+	int cap;
+};
+extern struct parts_controller_stack ctrl_stack;
+extern bool parts_multi_controller;
+int parts_controller_index(int id);
+void parts_controller_move(int id, int index);
+void parts_controller_set_stack(int nr, const int *ids);
+// The ID a save without an ID section gives the controller at a position.
+int parts_controller_default_id(int position);
+// v14: the controller's root parts (created when missing), NULL for the
+// system overlay controller, an unknown ID, or an older engine.
+struct parts *parts_controller_root(int id);
+bool parts_is_controller_root(struct parts *parts);
+// Puts every parts that has no parent or a root as its parent under the root
+// of the controller it belongs to (after loading a save).
+void parts_controller_relink_roots(void);
+
+// pe_v14_activity.c
+// A controller is releasing the parts of this number; if it is an activity
+// component (a pactex part), remember that. The activity table keeps its
+// entries (and IsExistActivity its answer) when a controller releases parts.
+void pe_v14_activity_parts_released(int parts_no);
+void pe_v14_activity_reset(void);
+void parts_v14_restart(void);
+void pe_v14_message_reset(void);
+bool pe_v14_activity_number_released(int parts_no);
+
+struct parts *parts_try_get(int parts_no);
+struct parts *parts_get(int parts_no);
+bool parts_exists(int parts_no);
+struct parts_cg *parts_get_cg(struct parts *parts, int state);
+struct parts_text *parts_get_text(struct parts *parts, int state);
+struct parts_animation *parts_get_animation(struct parts *parts, int state);
+struct parts_numeral *parts_get_numeral(struct parts *parts, int state);
+struct parts_gauge *parts_get_hgauge(struct parts *parts, int state);
+struct parts_gauge *parts_get_vgauge(struct parts *parts, int state);
+struct parts_construction_process *parts_get_construction_process(struct parts *parts, int state);
+struct parts_flash *parts_get_flash(struct parts *parts, int state);
+struct parts_flat *parts_get_flat(struct parts *parts, int state);
+struct parts_movie *parts_get_movie(struct parts *parts, int state);
+struct parts_layout_box *parts_get_layout_box(struct parts *parts);
+struct parts_3dlayer *parts_get_3dlayer(struct parts *parts, int state);
+void parts_set_pos(struct parts *parts, Point pos);
+void parts_set_global_pos(Point pos);
+void parts_clear_hit_mask(struct parts_common *common);
+void parts_set_dims(struct parts *parts, struct parts_common *common, int w, int h);
+void parts_set_scale_x(struct parts *parts, float mag);
+void parts_set_scale_y(struct parts *parts, float mag);
+void parts_set_rotation_z(struct parts *parts, float rot);
+void parts_set_alpha(struct parts *parts, int alpha);
+void parts_set_reverse(struct parts *parts, bool lr, bool tb);
+void parts_set_sub_color_mode(struct parts *parts, bool enable);
+Point parts_placed_pos(const struct parts *parts);
+void parts_parent_transform(struct parts *parts, mat4 out);
+void parts_rotate_xy(mat4 m, const struct parts_params *local);
+bool parts_matrix_is_flat(mat4 m);
+void parts_perspective(mat4 out);
+bool parts_box_faces_away(mat4 m);
+void parts_project_point(vec4 p, float *sx, float *sy);
+void parts_load_transform(struct parts *parts);
+Rectangle parts_screen_hitbox(struct parts *parts, struct parts_common *common);
+Point parts_screen_upper_left(struct parts *parts, struct parts_common *common);
+void parts_set_state(struct parts *parts, enum parts_state_type state);
+void parts_release(int parts_no);
+void parts_release_all(void);
+void parts_set_surface_area(struct parts *parts, struct parts_common *common, int x, int y, int w, int h);
+extern bool parts_message_window_show;
+// Sets it; v14 shows or hides again the subtrees of the linked parts.
+void parts_set_message_window_show(bool show);
+// v14: MessageWindowMulColorRate and MessageWindowAlphaRate of the last
+// UpdateComponent or UpdateMatrix (parts.c).
+extern float parts_message_window_mul_rate;
+extern float parts_message_window_alpha_rate;
+void parts_set_message_window_rates(float mul_color_rate, float alpha_rate);
+void parts_set_message_window_effect_link(struct parts *parts, bool link);
+
+/* A colour or alpha factor as the original makes it a byte: cvttss2si
+ * truncates, giving 0x80000000 for NaN or a value out of range, and the
+ * result is clamped to 0..255. */
+static inline int parts_rate_byte(float f)
+{
+	int v = f >= -2147483648.0f && f < 2147483648.0f ? (int)f : INT_MIN;
+	return v < 0 ? 0 : v > 255 ? 255 : v;
+}
+
+// message_window.c: the sidecar owns text/strings; the parts owns the background.
+void parts_message_window_background(struct parts *parts, float *alpha, float multiply_color[3]);
+void parts_message_window_free(struct parts_message_window *message);
+float parts_message_window_glyph_alpha(struct parts *parts, struct parts_text *text, int index);
+struct parts_text *parts_message_window_render_text(struct parts *parts, Point *position);
+struct texture *parts_message_window_key_wait(struct parts *parts, Point *position);
+void parts_message_window_update(int passed_time);
+void parts_message_window_update_times(int passed_time, int scaled_passed_time);
+extern struct cg *(*parts_key_wait_load_cg)(const char *name);
+
+// message queue (implemented in PartsEngine.c)
+void parts_enqueue_message(int type, int parts_no, int delegate_index, int unique_id);
+void parts_enqueue_message_vars(int type, int parts_no, int delegate_index, int unique_id,
+                                int nr_vars, const int *vars);
+
+extern struct parts_numeral_font *parts_numeral_fonts;
+extern int parts_nr_numeral_fonts;
+
+// for save.c
+void parts_list_resort(struct parts *parts);
+void parts_list_ensure_sorted(void);
+void parts_ensure_scene_registered(struct parts *parts);
+void parts_component_dirty(struct parts *parts);
+void parts_recalculate_hitbox(struct parts *parts);
+void parts_state_reset(struct parts_state *state, enum parts_type type);
+bool parts_cg_set(struct parts *parts, struct parts_cg *cg, struct string *cg_name);
+bool parts_cg_set_by_index(struct parts *parts, struct parts_cg *cg, int cg_no);
+void parts_text_append(struct parts *parts, struct parts_text *t, struct string *text);
+bool parts_animation_set_cg_by_index(struct parts *parts, struct parts_animation *anim,
+		int cg_no, int nr_frames, int frame_time);
+bool parts_animation_set_cg(struct parts *parts, struct parts_animation *anim,
+		struct string *cg_name, int start_no, int nr_frames, int frame_time);
+void parts_numeral_font_init(struct parts_numeral_font *font);
+bool parts_numeral_set_number(struct parts *parts, struct parts_numeral *num, int n);
+bool parts_numeral_update(struct parts *parts, struct parts_numeral *num);
+int parts_numeral_codes(struct parts_numeral *num, uint8_t *codes, bool *shown);
+bool parts_gauge_set_cg(struct parts *parts, struct parts_gauge *g, struct string *cg_name);
+bool parts_gauge_set_cg_by_index(struct parts *parts, struct parts_gauge *g, int cg_no);
+void parts_v14_gauge_render_geometry(struct parts *parts, struct parts_gauge *g, bool vertical, mat4 transform, Rectangle *source);
+void parts_v14_gauge_surface(struct parts_gauge *g, Rectangle *out);
+void parts_v14_gauge_fill_rect(struct parts_gauge *g, bool vertical, Rectangle *out);
+void parts_hgauge_set_rate(struct parts *parts, struct parts_gauge *g, float rate);
+void parts_vgauge_set_rate(struct parts *parts, struct parts_gauge *g, float rate);
+
+// scrollbar.c
+void parts_scrollbar_set_total(struct parts *parts, int total);
+void parts_scrollbar_set_view(struct parts *parts, int view);
+void parts_scrollbar_set_pos(struct parts *parts, int pos);
+void parts_scrollbar_set_rate(struct parts *parts, float rate);
+int parts_scrollbar_total(struct parts *parts);
+int parts_scrollbar_view(struct parts *parts);
+void parts_scrollbar_update(void);
+void parts_scrollbar_construct(struct parts *parts);
+void parts_scrollbar_loaded(struct parts *parts);
+void parts_scrollbar_set_names(struct parts *parts, const char *cg_name,
+		const char *over_bar_name, const char *over_bg_name);
+void parts_scrollbar_look_free(struct parts *parts);
+enum parts_scrollbar_hit {
+	PARTS_SCROLLBAR_MISS,
+	PARTS_SCROLLBAR_BAR,
+	PARTS_SCROLLBAR_TRACK,
+};
+bool parts_scrollbar_has_look(struct parts *parts);
+enum parts_scrollbar_hit parts_scrollbar_hittest(struct parts *parts, Point pos);
+void parts_scrollbar_input(Point pos, bool down, bool was_down, struct parts *target);
+void parts_scrollbar_reset_input(void);
+Texture *parts_scrollbar_render_textures(struct parts *parts, Texture **bar, Point *bg_pos,
+		Point *bar_pos);
+
+// checkbox.c
+struct parts_checkbox *parts_get_checkbox(struct parts *parts);
+struct parts_radio_box *parts_get_radio_box(struct parts *parts);
+void parts_widget_type_changed(struct parts *parts, int old_type);
+void parts_widget_free(struct parts *parts);
+void parts_checkbox_set_string(struct parts *parts, char **field, const char *value);
+void parts_checkbox_rebuild(struct parts *parts);
+void parts_checkbox_update(void);
+void parts_checkbox_set_checked(struct parts *parts, bool checked);
+void parts_checkbox_set_enable(struct parts *parts, bool enable);
+void parts_radio_box_add(struct parts *box, int child);
+void parts_widget_measure_text(const struct parts_widget_font *font, const char *text,
+		int char_space, int line_space, int *w, int *h);
+struct parts_button_text *parts_get_button_text(struct parts *parts);
+void parts_button_text_set(struct parts *parts, const char *text);
+bool parts_button_build_text_state(struct parts *parts, int state, const char *cg_name);
+
+// text.c
+void parts_text_free(struct parts_text *t);
+void parts_text_extent(struct parts_text *t, int *w, int *h);
+int parts_text_char_bytes(const char *src);
+struct string *parts_text_line_get(struct parts_text_line *line);
+struct string *parts_text_get(struct parts_text *t);
+
+// render.c
+int parts_clip_area_transform(struct parts *parts, mat4 out);
+int parts_effective_alpha_clipper(struct parts *parts);
+void parts_render_init(void);
+void parts_render_update(void);
+void parts_engine_dirty(void);
+void parts_engine_clean(void);
+void parts_dirty(struct parts *parts);
+void parts_sprite_render(struct sprite *sp);
+void parts_render(struct parts *parts);
+void parts_render_family(struct parts *parts);
+void parts_anchor_transform(struct parts *parts, float angle, bool rotate_scale, mat4 out);
+void parts_box_transform(struct parts *parts, struct parts_common *common, mat4 out);
+
+// motion.c
+void parts_motion_reset(void);
+void parts_clear_motion(struct parts *parts);
+void parts_add_motion(struct parts *parts, struct parts_motion *motion);
+
+// input.c
+extern bool parts_began_click;
+void parts_reset_input(void);
+void parts_input_release(struct parts *parts);
+bool parts_screen_to_box(struct parts *parts, struct parts_common *common, float sx, float sy,
+		float *bx, float *by);
+
+// message.c
+// The message types of programs before v14 (Rance 9 and later): from 1.
+// v14 (Dohna Dohna) numbers them from 0, as CPartsMessageManager@CallDelegate
+// (FUNC 8724) switches on them: see enum parts_v14_message_type.
+enum parts_message_type {
+	PARTS_MSG_MOUSE_ENTER    = 1,
+	PARTS_MSG_MOUSE_MOVE     = 2,
+	PARTS_MSG_MOUSE_LEAVE    = 3,
+	PARTS_MSG_MOUSE_WHEEL    = 4,
+	PARTS_MSG_MOUSE_CLICK    = 5,
+	PARTS_MSG_MOUSE_ON       = 6,
+	PARTS_MSG_DRAG_BEGIN     = 7,
+	PARTS_MSG_DRAGGING       = 8,
+	PARTS_MSG_DRAG_END       = 9,
+	PARTS_MSG_DROP_ENTER     = 10,
+	PARTS_MSG_DROP_ON        = 11,
+	PARTS_MSG_DROPPED        = 12,
+	PARTS_MSG_DROP_LEAVE     = 13,
+	PARTS_MSG_KEY_TRIGGER    = 14,
+	PARTS_MSG_KEY_DOWN       = 15,
+	PARTS_MSG_KEY_UP         = 17,
+};
+
+// v14: the types the input update sends, by the type function of each
+// message's vtable (0x80f1dc -> 0x426ae0 returns 0, 0x80f6f0 -> 0x43a600
+// returns 1, 0x80f1e8 -> 0x426f70 returns 2, 0x80f6e4 -> 0x429f90 returns 3,
+// 0x80f794 -> 0x426b40 returns 4,
+// 0x80f208 -> 0x429a10 returns 6, 0x80f580 -> 0x533d80 returns 19,
+// 0x80f5a4 -> 0x533d90 returns 20).
+enum parts_v14_message_type {
+	PARTS_V14_MSG_MOUSE_ENTER = 0,	// x, y
+	PARTS_V14_MSG_MOUSE_MOVE  = 1,	// x, y
+	PARTS_V14_MSG_MOUSE_LEAVE = 2,	// x, y
+	PARTS_V14_MSG_MOUSE_WHEEL = 3,	// forward, back
+	PARTS_V14_MSG_MOUSE_CLICK = 4,	// x, y, key
+	PARTS_V14_MSG_ON_CURSOR   = 6,	// x, y, time since entered
+	PARTS_V14_MSG_DRAG_BEGIN  = 7,	// key
+	PARTS_V14_MSG_DRAGGING    = 8,	// begin x, begin y, x, y, key
+	PARTS_V14_MSG_DRAG_END    = 10,	// key, mode
+	PARTS_V14_MSG_DROP_LEAVE  = 14,	// source parts number
+	PARTS_V14_MSG_KEY_TRIGGER = 15,	// key
+	PARTS_V14_MSG_KEY_DOWN    = 16,	// key
+	PARTS_V14_MSG_KEY_PRESS   = 17,	// key
+	PARTS_V14_MSG_KEY_UP      = 18,	// key
+	PARTS_V14_MSG_FOCUS       = 19,
+	PARTS_V14_MSG_LOST_FOCUS  = 20,
+};
+
+void parts_msg_push(struct parts* parts, int type, const char *fmt, ...);
+
+// construction.c
+void parts_cp_op_free(struct parts_cp_op *op);
+void parts_add_cp_op(struct parts_construction_process *cproc, struct parts_cp_op *op);
+bool parts_build_construction_process(struct parts *parts,
+		struct parts_construction_process *cproc);
+bool parts_clear_construction_process(struct parts_construction_process *cproc);
+void parts_cp_tile(uint8_t *pixels, int tw, int th, int x, int y, int w, int h,
+		const uint8_t *src, int cw, int ch);
+struct parts_panel *parts_get_panel(struct parts *parts);
+void parts_panel_init(struct parts *parts, int w, int h, int r, int g, int b, int a, const int grad[4]);
+void parts_panel_set_size(struct parts *parts, int w, int h);
+void parts_panel_set_color(struct parts *parts, int r, int g, int b, int a);
+void parts_panel_set_gradation(struct parts *parts, int side, int size);
+void parts_panel_load_blended(struct parts *parts);
+
+// flash.c
+void parts_flash_free(struct parts_flash *f);
+bool parts_flash_load(struct parts *parts, struct parts_flash *f, struct string *filename);
+bool parts_flash_update(struct parts_flash *f, int passed_time);
+bool parts_flash_seek(struct parts_flash *f, int frame);
+
+// flat.c
+void parts_flat_free(struct parts_flat *f);
+bool parts_flat_load(struct parts *parts, struct parts_flat *f, struct string *filename);
+bool parts_flat_update(struct parts_flat *f, int passed_time);
+int parts_flat_find_library(struct flat *fl, const char *name);
+int parts_flat_stop_motion_get_cg_lib(struct parts_flat *f, int sm_lib_idx, int local);
+
+struct flat_emitter;
+struct flat_key_data_graphic;
+
+struct flat_emitter_particle {
+	vec2 pos;          // emitter-space position (pixels)
+	vec2 scale;
+	vec3 rot;          // degrees (x, y, z)
+	float fade_alpha;  // 0-1.0
+	int cg_lib_idx;    // CG library index of the texture for this particle
+};
+
+// Per-key emitter properties after applying the emitter's inherit_* flags.
+struct flat_emitter_layer_effective {
+	vec2 pos;
+	bool reverse_lr, reverse_tb;
+	float alpha;
+	vec3 add_color;
+	vec3 mul_color;
+	int draw_filter;
+	bool use_scale;
+	bool use_rotation;
+	bool use_origin;
+};
+
+#define FLAT_MAX_ANCESTOR_DEPTH 32
+struct flat_key_stack {
+	const struct flat_key_data_graphic *keys[FLAT_MAX_ANCESTOR_DEPTH];
+	int count;
+};
+
+typedef void (*flat_emitter_particle_fn)(const struct flat_emitter_particle *p,
+		void *ud);
+bool parts_flat_emitter_get_align_offset(struct parts_flat *f, int emitter_lib_idx, vec2 out);
+void parts_flat_foreach_emitter_particle(struct parts_flat *f, int emitter_lib_idx,
+		const struct flat_key_data_graphic *keys,
+		int birth_frame, int age, int frame_count,
+		flat_emitter_particle_fn fn, void *ud);
+void parts_flat_build_layer_matrix(const struct flat_key_data_graphic *key,
+		vec2 pos,
+		bool use_rotation, bool use_scale, bool use_origin,
+		bool reverse_lr, bool reverse_tb,
+		mat4 out);
+void parts_flat_build_emitter_base_matrix(const struct flat_emitter *em,
+		const struct flat_key_stack *stack, mat4 out);
+void parts_flat_emitter_resolve_layer(
+		const struct flat_emitter *em,
+		const struct flat_key_data_graphic *key,
+		float parts_alpha, float layer_alpha,
+		struct flat_emitter_layer_effective *out);
+
+// layoutbox.c
+void parts_do_layout(struct parts *parts);
+void parts_layout_size_changed(struct parts *parts);
+
+// debug.c
+struct sprite;
+void parts_debug_init(void);
+cJSON *parts_engine_to_json(struct sprite *sp, bool verbose);
+cJSON *parts_sprite_to_json(struct sprite *sp, bool verbose);
+
+static inline bool parts_state_valid(int state)
+{
+	return state >= 0 && state <= 2;
+}
+
+int parts_cg_deform(struct parts *parts, int state);
+
+#endif /* SYSTEM4_PARTS_INTERNAL_H */

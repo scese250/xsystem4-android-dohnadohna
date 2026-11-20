@@ -15,6 +15,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONException
 import java.io.File
 import java.io.InputStream
 import java.io.IOException
@@ -38,35 +40,59 @@ sealed class InstallState {
     data class Failed(val msgId: Int) : InstallState()
 }
 
-data class Item(val name: String, val path: File, val homedir: File, val savedir: File?, val icon: File?, val error: String?, val encoding: String = "sjis") {
+data class Item(
+    val name: String,
+    val path: File,
+    val homedir: File,
+    val savedir: File?,
+    val icon: File?,
+    val error: String?,
+    val encoding: String = "sjis",
+    val isDirectExternal: Boolean = false,
+    val customPathRoot: String? = null
+) {
     companion object {
-        fun fromDirectory(dir: File, homedir: File, context: Context): Item {
-            var iniFile = File(dir, "System40.ini")
-            if (!iniFile.exists())
-                iniFile = File(dir, "AliceStart.ini")
-            if (!iniFile.exists()) {
+        fun findIniFile(dir: File): File? {
+            val system40 = File(dir, "System40.ini")
+            if (system40.isFile) return system40
+            val aliceStart = File(dir, "AliceStart.ini")
+            if (aliceStart.isFile) return aliceStart
+            val files = dir.listFiles() ?: return null
+            return files.firstOrNull { it.isFile && it.name.equals("System40.ini", ignoreCase = true) }
+                ?: files.firstOrNull { it.isFile && it.name.equals("AliceStart.ini", ignoreCase = true) }
+        }
+
+        fun fromDirectory(
+            dir: File,
+            homedir: File,
+            context: Context,
+            isDirectExternal: Boolean = false,
+            customPathRoot: String? = null
+        ): Item {
+            val iniFile = findIniFile(dir)
+            if (iniFile == null) {
                 val err = context.getString(R.string.toast_no_ini, dir.path)
                 Log.w("GameList", err)
-                return Item(dir.name, dir, homedir, null, null, err)
+                return Item(dir.name, dir, homedir, null, null, err, isDirectExternal = isDirectExternal, customPathRoot = customPathRoot)
             }
             val icon = findIcon(dir)
             val ini = System40Ini.parse(iniFile, Xsys4rc.read(dir)["encoding"])
             if (ini.gameName == null) {
                 val err = context.getString(R.string.toast_no_GameName, iniFile.path)
                 Log.w("GameList", err)
-                return Item(dir.name, dir, homedir, null, icon, err)
+                return Item(dir.name, dir, homedir, null, icon, err, isDirectExternal = isDirectExternal, customPathRoot = customPathRoot)
             }
             val savedir = File(dir, ini.SaveFolder ?: "SaveData")
-            return Item(ini.gameName, dir, homedir, savedir, icon, null, ini.encoding)
+            return Item(ini.gameName, dir, homedir, savedir, icon, null, ini.encoding, isDirectExternal, customPathRoot)
         }
 
         private fun findIcon(dir: File): File? {
             dir.listFiles()?.forEach {
-                if (it.extension == "ico") { return it }
+                if (it.extension.equals("ico", ignoreCase = true)) { return it }
             }
             try {
                 dir.listFiles { file ->
-                    file.extension == "exe" &&
+                    file.extension.equals("exe", ignoreCase = true) &&
                             file.name != "OpenSaveFolder.exe" &&
                             file.name != "ResetConfig.exe" &&
                             file.name != "Uninstaller.exe"
@@ -177,10 +203,86 @@ object Xsys4rc {
     }
 }
 
+object CustomGamePaths {
+    private const val PREFS_NAME = "xsystem4_prefs"
+    private const val KEY_CUSTOM_PATHS = "custom_game_paths"
+
+    fun getCustomPaths(context: Context): List<String> {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val raw = prefs.getString(KEY_CUSTOM_PATHS, null) ?: return emptyList()
+        return try {
+            val arr = JSONArray(raw)
+            (0 until arr.length()).mapNotNull { i ->
+                arr.optString(i).takeIf { it.isNotBlank() }
+            }
+        } catch (e: JSONException) {
+            Log.w("GameList", "Failed to parse custom game paths", e)
+            emptyList()
+        }
+    }
+
+    fun addCustomPath(context: Context, path: String): Boolean {
+        val normalized = canonicalOrAbsolute(File(path))
+        val current = getCustomPaths(context).toMutableList()
+        if (current.any { canonicalOrAbsolute(File(it)) == normalized }) {
+            return false
+        }
+        current.add(normalized)
+        setCustomPaths(context, current)
+        return true
+    }
+
+    fun removeCustomPath(context: Context, path: String): Boolean {
+        val normalized = canonicalOrAbsolute(File(path))
+        val current = getCustomPaths(context)
+        val filtered = current.filter { canonicalOrAbsolute(File(it)) != normalized }
+        if (filtered.size == current.size) {
+            return false
+        }
+        setCustomPaths(context, filtered)
+        return true
+    }
+
+    fun setCustomPaths(context: Context, paths: List<String>) {
+        val arr = JSONArray()
+        val seen = HashSet<String>()
+        for (p in paths) {
+            val normalized = canonicalOrAbsolute(File(p))
+            if (seen.add(normalized)) {
+                arr.put(normalized)
+            }
+        }
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_CUSTOM_PATHS, arr.toString())
+            .apply()
+    }
+
+    fun canonicalOrAbsolute(file: File): String {
+        return try {
+            file.canonicalPath
+        } catch (e: IOException) {
+            file.absolutePath
+        }
+    }
+}
+
 class GameList(activity: Activity) {
+    companion object {
+        fun hasIniFile(dir: File): Boolean = Item.findIniFile(dir) != null
+
+        fun isValidGameOrParentDirectory(dir: File): Boolean {
+            if (hasIniFile(dir)) return true
+            return dir.listFiles()?.any {
+                !it.name.startsWith(".") && it.isDirectory && hasIniFile(it)
+            } ?: false
+        }
+    }
+
     private val context: Context = activity.applicationContext
     private val items: ArrayList<Item> = arrayListOf()
     private val storageDirs: ArrayList<File> = arrayListOf()
+    private val seenCanonicalPaths = HashSet<String>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var installJob: Job? = null
     operator fun get(index: Int): Item = items[index]
@@ -190,6 +292,19 @@ class GameList(activity: Activity) {
         private set
 
     class InstallFailureException(val msgId: Int) : Exception()
+
+    private fun addDirectoryItem(
+        dir: File,
+        homedir: File,
+        isDirectExternal: Boolean = false,
+        customPathRoot: String? = null
+    ) {
+        val canonical = CustomGamePaths.canonicalOrAbsolute(dir)
+        if (!seenCanonicalPaths.add(canonical)) {
+            return
+        }
+        items.add(Item.fromDirectory(dir, homedir, context, isDirectExternal, customPathRoot))
+    }
 
     init {
         for (storagePath in activity.getExternalFilesDirs(null).filterNotNull()) {
@@ -203,7 +318,7 @@ class GameList(activity: Activity) {
             val files = storagePath.listFiles() ?: continue
             for (path in files) {
                 if (!path.name.startsWith(".") && path.isDirectory) {
-                    items.add(Item.fromDirectory(path, homedir, context))
+                    addDirectoryItem(path, homedir)
                 }
             }
             if (state == Environment.MEDIA_MOUNTED && files.isEmpty()) {
@@ -219,6 +334,37 @@ class GameList(activity: Activity) {
                 )
             }
         }
+
+        // Scan shared /storage/emulated/0/xsystem4 directory if accessible.
+        val sharedDir = File(Environment.getExternalStorageDirectory(), "xsystem4")
+        if (sharedDir.exists() && sharedDir.isDirectory && sharedDir.canRead()) {
+            val homedir = File(sharedDir, ".xsystem4")
+            sharedDir.listFiles()?.sortedBy { it.name.lowercase() }?.forEach { path ->
+                if (!path.name.startsWith(".") && path.isDirectory) {
+                    addDirectoryItem(path, homedir, isDirectExternal = true)
+                }
+            }
+        }
+
+        // Scan user-configured custom game folders / parent folders.
+        for (customPath in CustomGamePaths.getCustomPaths(context)) {
+            val dir = File(customPath)
+            if (!dir.exists() || !dir.isDirectory || !dir.canRead()) {
+                continue
+            }
+            if (hasIniFile(dir)) {
+                val homedir = File(dir.parentFile ?: dir, ".xsystem4")
+                addDirectoryItem(dir, homedir, isDirectExternal = true, customPathRoot = customPath)
+            } else {
+                val homedir = File(dir, ".xsystem4")
+                dir.listFiles()?.sortedBy { it.name.lowercase() }?.forEach { child ->
+                    if (!child.name.startsWith(".") && child.isDirectory && hasIniFile(child)) {
+                        addDirectoryItem(child, homedir, isDirectExternal = true, customPathRoot = customPath)
+                    }
+                }
+            }
+        }
+
         moveSaveDirectories()
     }
 
@@ -305,7 +451,7 @@ class GameList(activity: Activity) {
                     path.parentFile?.mkdirs()
                     path.outputStream().buffered().use { zip.copyTo(it) }
 
-                    if (path.name == "System40.ini" || path.name == "AliceStart.ini") {
+                    if (path.name.equals("System40.ini", ignoreCase = true) || path.name.equals("AliceStart.ini", ignoreCase = true)) {
                         gameRoot = path.parentFile
                     }
                 }

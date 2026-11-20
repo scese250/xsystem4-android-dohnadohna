@@ -1,9 +1,26 @@
 <resources>
     <string name="app_name">xsystem4</string>
     <string name="action_refresh">Refresh</string>
+    <string name="action_add_game_folder">Add Game Folder</string>
+    <string name="action_grant_storage_access">Grant All Files Access</string>
     <string name="action_help">Help</string>
     <string name="action_install_from_zip">Install from ZIP</string>
     <string name="action_licenses">Open source licenses</string>
+    <string name="storage_access_already_granted">All files access is already granted.</string>
+    <string name="add_folder_dialog_title">Add Game Folder</string>
+    <string name="add_folder_dialog_message">Enter a game folder (containing AliceStart.ini / System40.ini) or a parent folder containing game subfolders.</string>
+    <string name="add_folder_hint">/storage/emulated/0/DohnaDohna</string>
+    <string name="add_folder_button_add">Add</string>
+    <string name="add_folder_button_manage">Manage Folders</string>
+    <string name="add_folder_error_empty">Please enter a folder path.</string>
+    <string name="add_folder_error_not_found">Directory does not exist.</string>
+    <string name="add_folder_error_not_readable">Directory is not readable. Grant All Files Access first.</string>
+    <string name="add_folder_error_no_games">No AliceStart.ini / System40.ini or game subfolders found in this directory.</string>
+    <string name="add_folder_added">Added folder: %s</string>
+    <string name="add_folder_already_added">Folder is already in the list.</string>
+    <string name="manage_folders_dialog_title">Custom Game Folders (uncheck to remove)</string>
+    <string name="remove_custom_folder_message">Remove custom folder \"%s\" from the list? (Game files on disk will not be deleted.)</string>
+    <string name="external_uninstall_notice">Games in %s are managed directly in storage. Use a file manager to delete them.</string>
     <string name="choose_a_file">Choose a file</string>
     <string name="ok">OK</string>
     <string name="cancel">Cancel</string>

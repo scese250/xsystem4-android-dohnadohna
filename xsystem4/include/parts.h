@@ -1,0 +1,409 @@
+/* Copyright (C) 2019 Nunuhara Cabbage <nunuhara@haniwa.technology>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, see <http://gnu.org/licenses/>.
+ */
+
+#ifndef SYSTEM4_PARTS_H
+#define SYSTEM4_PARTS_H
+
+#include <stdbool.h>
+
+struct page;
+struct string;
+
+// v14 message windows keep their text independently from the background CG.
+void PE_SetMessageWindowTextSpeed(int parts_no, int speed);
+int PE_GetMessageWindowTextSpeed(int parts_no);
+void PE_FixMessageWindowText(int parts_no);
+bool PE_IsFixedMessageWindowText(int parts_no);
+void PE_SetMessageWindowText(int parts_no, struct string *text, int msg_num,
+		struct string *func_name, int ver, int step);
+struct string *PE_GetMessageWindowText(int parts_no);
+void PE_SetMessageWindowCGName(int parts_no, struct string *name);
+struct string *PE_GetMessageWindowCGName(int parts_no);
+void PE_SetMessageWindowTextArea(int parts_no, int x, int y, int w, int h);
+void PE_GetMessageWindowTextArea(int parts_no, int *x, int *y, int *w, int *h);
+void PE_SetMessageWindowTextOriginPosMode(int parts_no, int mode);
+void PE_SetMessageWindowTextFont(int parts_no, int type, int size,
+		int r, int g, int b, float bold_weight,
+		int edge_r, int edge_g, int edge_b, float edge_weight);
+void PE_SetMessageWindowTextSpace(int parts_no, int letter_space, int line_space);
+void PE_SetKeyWaitShow(int parts_no, bool show);
+bool PE_IsKeyWaitShow(int parts_no);
+void PE_SetKeyWaitCGName(int parts_no, struct string *name, int start_no,
+		int nr_cg, int time_per_cg);
+bool PE_GetKeyWaitCGName(int parts_no, struct string **name, int *start_no,
+		int *nr_cg, int *time_per_cg);
+void PE_SetKeyWaitFlatName(int parts_no, struct string *name);
+struct string *PE_GetKeyWaitFlatName(int parts_no);
+void PE_SetKeyWaitPos(int parts_no, int x, int y, int z);
+int PE_GetKeyWaitPosX(int parts_no);
+int PE_GetKeyWaitPosY(int parts_no);
+int PE_GetKeyWaitPosZ(int parts_no);
+
+// parts.c
+void PE_enable_multi_controller(void);
+bool PE_Init(void);
+void PE_Reset(void);
+void PE_Update(int passed_time, bool message_window_show);
+void PE_UpdateScaled(int passed_time, int scaled_passed_time, bool message_window_show);
+void PE_UpdateComponent(int passed_time);
+void PE_UpdateParts(int passed_time, bool is_skip, bool message_window_show);
+void PE_SetDelegateIndex(int parts_no, int delegate_index);
+int PE_GetDelegateIndex(int parts_no);
+bool PE_SetPartsCG(int parts_no, struct string *cg_name, int sprite_deform, int state);
+bool PE_SetPartsCG_by_index(int parts_no, int cg_no, int sprite_deform, int state);
+bool PE_SetPartsCG_by_string_index(int parts_no, struct string *cg_no,
+		int sprite_deform, int state);
+int PE_GetPartsCGDeform(int parts_no, int state);
+void PE_GetPartsCGName(int parts_no, struct string **cg_name, int state);
+bool PE_SetPartsCGSurfaceArea(int parts_no, int x, int y, int w, int h, int state);
+void PE_GetPartsCGSurfaceArea(int parts_no, int *x, int *y, int *w, int *h, int state);
+int PE_GetPartsCGNumber(int parts_no, int state);
+bool PE_SetLoopCG_by_index(int parts_no, int cg_no, int nr_frames, int frame_time, int state);
+bool PE_SetLoopCG(int parts_no, struct string *cg_name, int start_no, int nr_frames,
+		int frame_time, int state);
+bool PE_SetLoopCGSurfaceArea(int parts_no, int x, int y, int w, int h, int state);
+bool PE_SetHGaugeCG(int parts_no, struct string *cg_name, int state);
+bool PE_SetHGaugeCG_by_index(int parts_no, int cg_no, int state);
+bool PE_SetHGaugeRate(int parts_no, float numerator, float denominator, int state);
+bool PE_SetHGaugeRate_int(int parts_no, int numerator, int denominator, int state);
+bool PE_SetHGaugeSurfaceArea(int parts_no, int x, int y, int w, int h, int state);
+bool PE_SetVGaugeCG(int parts_no, struct string *cg_name, int state);
+bool PE_SetVGaugeCG_by_index(int parts_no, int cg_no, int state);
+bool PE_SetVGaugeRate(int parts_no, float numerator, float denominator, int state);
+bool PE_SetVGaugeRate_int(int parts_no, int numerator, int denominator, int state);
+bool PE_SetVGaugeSurfaceArea(int parts_no, int x, int y, int w, int h, int state);
+bool PE_SetNumeralCG(int parts_no, struct string *cg_name, int state);
+bool PE_SetNumeralCG_by_index(int parts_no, int cg_no, int state);
+bool PE_SetNumeralLinkedCGNumberWidthWidthList_by_index(int parts_no, int cg_no,
+		int w0, int w1, int w2, int w3, int w4, int w5, int w6, int w7, int w8,
+		int w9, int w_minus, int w_comma, int state);
+bool PE_SetNumeralLinkedCGNumberWidthWidthList(int parts_no, struct string *cg_name,
+		int w0, int w1, int w2, int w3, int w4, int w5, int w6, int w7, int w8,
+		int w9, int w_minus, int w_comma, int state);
+bool PE_SetNumeralFont(int parts_no, int type, int size, int r, int g, int b,
+		float bold_weight, int edge_r, int edge_g, int edge_b, float edge_weight,
+		int state);
+bool PE_SetNumeralFullPitch(int parts_no, bool full, int state);
+bool PE_SetNumeralShowType(int parts_no, int type, int state);
+bool PE_SetNumeralShowPadding(int parts_no, bool show, int state);
+bool PE_SetNumeralNumber(int parts_no, int n, int state);
+bool PE_SetNumeralShowComma(int parts_no, bool show_comma, int state);
+bool PE_SetNumeralSpace(int parts_no, int space, int state);
+bool PE_SetNumeralLength(int parts_no, int length, int state);
+bool PE_SetNumeralSurfaceArea(int parts_no, int x, int y, int w, int h, int state);
+void PE_ReleaseParts(int parts_no);
+void PE_ReleaseAllParts(void);
+void PE_ReleaseAllPartsWithoutSystem(void);
+void PE_ReleaseAllWithoutSystem(struct page **erase_number_list);
+void PE_SetPos(int parts_no, int x, int y);
+int PE_GetPartsX(int parts_no);
+int PE_GetPartsY(int parts_no);
+void PE_SetZ(int parts_no, int z);
+int PE_GetPartsZ(int parts_no);
+void PE_SetShow(int parts_no, bool show);
+bool PE_GetPartsShow(int parts_no);
+void PE_SetAlpha(int parts_no, int alpha);
+int PE_GetPartsAlpha(int parts_no);
+void PE_SetPartsDrawFilter(int parts_no, int draw_filter);
+int PE_GetPartsDrawFilter(int parts_no);
+void PE_SetAddColor(int parts_no, int r, int g, int b);
+void PE_GetAddColor(int parts_no, int *r, int *g, int *b);
+void PE_SetMultiplyColor(int parts_no, int r, int g, int b);
+void PE_GetMultiplyColor(int parts_no, int *r, int *g, int *b);
+void PE_SetSubColorMode(int parts_no, bool enable);
+bool PE_IsSubColorMode(int parts_no);
+int PE_GetPartsWidth(int parts_no, int state);
+int PE_GetPartsHeight(int parts_no, int state);
+void PE_GetPartsSize(int parts_no, int *width, int *height, int state);
+bool PE_GetPartsUpperLeftPosF(int parts_no, int state, float *x, float *y);
+int PE_GetPartsUpperLeftPosX(int parts_no, int state);
+int PE_GetPartsUpperLeftPosY(int parts_no, int state);
+void PE_SetPartsOriginPosMode(int parts_no, int origin_pos_mode);
+int PE_GetPartsOriginPosMode(int parts_no);
+void PE_SetParentPartsNumber(int parts_no, int parent_parts_no);
+int PE_GetParentPartsNumber(int parts_no);
+bool PE_SetPartsGroupNumber(int parts_no, int group_no);
+void PE_SetPartsMessageWindowShowLink(int parts_no, bool message_window_show_link);
+bool PE_GetPartsMessageWindowShowLink(int parts_no);
+void PE_SetSpeedupRateByMessageSkip(int parts_no, int rate);
+void PE_SetEnableSpeedUp(int parts_no, bool enable);
+bool PE_IsEnableSpeedUp(int parts_no);
+void PE_SetPartsMagX(int parts_no, float scale_x);
+float PE_GetPartsMagX(int parts_no);
+void PE_SetPartsMagY(int parts_no, float scale_y);
+float PE_GetPartsMagY(int parts_no);
+void PE_SetPartsRotateX(int parts_no, float rot_x);
+void PE_SetPartsRotateY(int parts_no, float rot_y);
+void PE_SetPartsRotateZ(int parts_no, float rot_z);
+float PE_GetPartsRotateZ(int parts_no);
+float PE_GetPartsRotateX(int parts_no);
+float PE_GetPartsRotateY(int parts_no);
+void PE_SetPartsAlphaClipperPartsNumber(int parts_no, int alpha_clipper_parts_no);
+void PE_SetPartsPixelDecide(int PartsNumber, bool pixel_decide);
+bool PE_SetThumbnailReductionSize(int reduction_size);
+bool PE_SetThumbnailMode(bool Mode);
+void PE_SetComponentType(int parts_no, int type, int state);
+int PE_GetComponentType(int parts_no, int state);
+void PE_SetButtonEnable(int parts_no, bool enable);
+bool PE_IsButtonEnable(int parts_no);
+void PE_SetInputState(int parts_no, int state);
+int PE_GetInputState(int parts_no);
+bool PE_SetPartsRectangleDetectionSize(int parts_no, int w, int h, int state);
+bool PE_SetPartsCGDetectionSize(int parts_no, struct string *cg_name, int state);
+bool PE_Save(struct page **buffer);
+bool PE_SaveWithoutHideParts(struct page **buffer);
+bool PE_Load(struct page **buffer);
+int PE_AddController(int index);
+void PE_RemoveController(struct page **erase_number_list, int index);
+bool PE_CreateParts3DLayerPluginID(int parts_no, int state);
+int PE_GetParts3DLayerPluginID(int parts_no, int state);
+bool PE_ReleaseParts3DLayerPluginID(int parts_no, int state);
+// GUIEngine
+int PE_GetFreeNumber(void);
+bool PE_IsExist(int parts_no);
+// PartsFunc interface
+void PE_set_active_controller(int controller_no);
+int PE_get_active_controller(void);
+int PE_get_system_controller(void);
+void PE_parts_set_want_save(int parts_no, bool want_save);
+bool PE_save_thumbnail(struct string *filename, int reduction_factor);
+bool PE_SaveThumbnail(struct string *filename, int width);
+bool PE_init_parts_movie(int parts_no, int width, int height, int bg_r, int bg_g, int bg_b, int state);
+int PE_get_movie_sprite(int parts_no, int state);
+void PE_update_parts_movies(void);
+float PE_parts_get_absolute_x(int parts_no);
+float PE_parts_get_absolute_y(int parts_no);
+int PE_parts_get_absolute_z(int parts_no);
+void PE_parts_set_lock_input_state(int parts_no, bool lock);
+
+// construction.c
+bool PE_AddCreateToPartsConstructionProcess(int parts_no, int w, int h, int state);
+bool PE_AddCreatePixelOnlyToPartsConstructionProcess(int parts_no, int w, int h, int state);
+bool PE_AddCreateCGToProcess(int parts_no, struct string *cg_name, int state);
+bool PE_AddFillToPartsConstructionProcess(int parts_no, int x, int y, int w, int h,
+		int r, int g, int b, int state);
+bool PE_AddFillAlphaColorToPartsConstructionProcess(int parts_no, int x, int y, int w, int h,
+		int r, int g, int b, int a, int state);
+bool PE_AddFillAMapToPartsConstructionProcess(int parts_no, int x, int y, int w, int h, int a, int state);
+bool PE_AddFillWithAlphaToPartsConstructionProcess(int parts_no, int x, int y, int w, int h,
+		int r, int g, int b, int a, int state);
+bool PE_AddDrawRectToPartsConstructionProcess(int parts_no, int x, int y, int w, int h,
+		int r, int g, int b, int state);
+bool PE_AddDrawCutCGToPartsConstructionProcess(int parts_no, struct string *cg_name,
+		int dx, int dy, int dw, int dh, int sx, int sy, int sw, int sh, int interp_type, int state);
+bool PE_AddCopyCutCGToPartsConstructionProcess(int parts_no, struct string *cg_name,
+		int dx, int dy, int dw, int dh, int sx, int sy, int sw, int sh, int interp_type, int state);
+bool PE_AddScaleCopyCGToPartsConstructionProcess(int parts_no, struct string *cg_name,
+		int dx, int dy, int dw, int dh, int sx, int sy, int sw, int sh, int interp_type, int state);
+bool PE_AddCutCGCopyToPartsConstructionProcess(int parts_no, struct string *cg_name,
+		int dx, int dy, int sx, int sy, int w, int h, int state);
+bool PE_AddCutCGScaleBlendToPartsConstructionProcess(int parts_no, struct string *cg_name,
+		int dx, int dy, int dw, int dh, int sx, int sy, int sw, int sh, int interp_type, int state);
+bool PE_AddGrayFilterToPartsConstructionProcess(int parts_no, int x, int y, int w, int h,
+		bool full_size, int state);
+bool PE_AddFillPieAMapToPartsConstructionProcess(int parts_no, int x, int y, int rx, int ry,
+		int start_angle, int sweep_angle, int a, int angle, int state);
+bool PE_AddMulAMapGradationToPartsConstructionProcess(int parts_no, bool columns,
+		int x, int y, int w, int h, bool full_size, int a1, int a2, int state);
+bool PE_AddBlurToPartsConstructionProcess(int parts_no, bool vertical,
+		int x, int y, int w, int h, bool full_size, int radius, int state);
+bool PE_AddFillCircleToPartsConstructionProcess(int parts_no, bool blend, int x, int y, int radius,
+		int r, int g, int b, int a, int state);
+bool PE_AddFillCircleInRectToPartsConstructionProcess(int parts_no, bool blend, int x, int y, int w, int h,
+		int r, int g, int b, int a, int state);
+bool PE_AddFillPieInRectToPartsConstructionProcess(int parts_no, int x, int y, int w, int h,
+		int start_angle, int sweep_angle, int r, int g, int b, int a, int angle, int state);
+bool PE_AddDrawCircleToPartsConstructionProcess(int parts_no, int x, int y, int radius, int line_width,
+		int a, int state);
+bool PE_AddFillPolygonToPartsConstructionProcess(int parts_no, int nr_points, const int *points,
+		int r, int g, int b, int a, int state);
+bool PE_AddFillPolygonWriteToPartsConstructionProcess(int parts_no, bool amap_only, int nr_points,
+		const int *points, int r, int g, int b, int a, int state);
+bool PE_AddTileCGToPartsConstructionProcess(int parts_no, struct string *cg_name,
+		int x, int y, int w, int h, bool full_size, int state);
+bool PE_AddBlendFillToPartsConstructionProcess(int parts_no, int x, int y, int w, int h,
+		bool full_size, int r, int g, int b, int a, int state);
+bool PE_AddGrayScaleToPartsConstructionProcess(int parts_no, int x, int y, int w, int h,
+		bool full_size, int state);
+bool PE_AddCopyTextToPartsConstructionProcess(int parts_no, int x, int y, struct string *text,
+		int type, int size, int r, int g, int b, float bold_weight,
+		int edge_r, int edge_g, int edge_b, float edge_weight,
+		int char_space, int line_space, int state);
+bool PE_AddDrawTextToPartsConstructionProcess(int parts_no, int x, int y, struct string *text,
+		int type, int size, int r, int g, int b, float bold_weight,
+		int edge_r, int edge_g, int edge_b, float edge_weight,
+		int char_space, int line_space, int state);
+bool PE_AddAlphaBlendTextToPartsConstructionProcess(int parts_no, int x, int y, struct string *text,
+		int type, int size, int r, int g, int b, float bold_weight,
+		int edge_r, int edge_g, int edge_b, float edge_weight,
+		int char_space, int line_space, int state);
+bool PE_AddOnlyAlphaTextToPartsConstructionProcess(int parts_no, int x, int y, struct string *text,
+		int type, int size, int r, int g, int b, float bold_weight,
+		int edge_r, int edge_g, int edge_b, float edge_weight,
+		int char_space, int line_space, int state);
+bool PE_BuildPartsConstructionProcess(int parts_no, int state);
+bool PE_ClearPartsConstructionProcess(int parts_no, int state);
+bool PE_SetPartsConstructionSurfaceArea(int parts_no, int x, int y, int w, int h, int state);
+
+// input.c
+void PE_UpdateInputState(int passed_time);
+void PE_SetPassCursor(int parts_no, bool pass);
+bool PE_GetPartsPassCursor(int parts_no);
+void PE_SetClickable(int parts_no, bool clickable);
+bool PE_GetPartsClickable(int parts_no);
+void PE_SetDrag(int parts_no, bool enable);
+void PE_SetPartsGroupDecideOnCursor(int group_no, bool decide_on_cursor);
+void PE_SetPartsGroupDecideClick(int group_no, bool decide_click);
+void PE_SetOnCursorShowLinkPartsNumber(int parts_no, int link_parts_no);
+int PE_GetOnCursorShowLinkPartsNumber(int parts_no);
+int PE_v14_GetOnCursorShowLinkPartsNumber(int parts_no);
+void PE_SetSoundName(int parts_no, struct string *name, int state);
+struct string *PE_GetSoundName(int parts_no, int state);
+void PE_PlaySound(int parts_no, int state);
+bool PE_SetPartsOnCursorSoundNumber(int parts_no, int sound_no);
+bool PE_SetPartsClickSoundNumber(int parts_no, int sound_no);
+bool PE_SetClickMissSoundNumber(int sound_no);
+void PE_BeginInput(void);
+void PE_EndInput(void);
+int PE_GetClickPartsNumber(void);
+int PE_GetActivePartsNumber(void);
+bool PE_IsCursorIn(int parts_no, int mouse_x, int mouse_y, int state);
+
+// message.c
+void PE_ReleaseMessage(void);
+void PE_PopMessage(void);
+int PE_GetMessageType(void);
+int PE_GetMessagePartsNumber(void);
+int PE_GetMessageDelegateIndex(void);
+int PE_GetMessageVariableCount(void);
+int PE_GetMessageVariableType(int index);
+int PE_GetMessageVariableInt(int index);
+float PE_GetMessageVariableFloat(int index);
+bool PE_GetMessageVariableBool(int index);
+void PE_GetMessageVariableString(int index, struct string **out);
+
+// motion.c
+void PE_AddMotionPos(int parts_no, int begin_x, int begin_y, int end_x, int end_y, int begin_t, int end_t);
+void PE_AddMotionPos_curve(int parts_no, int begin_x, int begin_y, int end_x, int end_y,
+		int begin_t, int end_t, struct string *curve_name);
+void PE_AddMotionAlpha(int parts_no, int begin_a, int end_a, int begin_t, int end_t);
+void PE_AddMotionAlpha_curve(int parts_no, int begin_a, int end_a, int begin_t, int end_t,
+		struct string *curve_name);
+void PE_AddMotionCG_by_index(int parts_no, int begin_cg_no, int nr_cg, int begin_t, int end_t);
+void PE_AddMotionHGaugeRate(int parts_no, float begin_numerator, float begin_denominator,
+			    float end_numerator, float end_denominator, int begin_t, int end_t);
+void PE_AddMotionHGaugeRate_curve(int parts_no, float begin_numerator, float begin_denominator,
+			    float end_numerator, float end_denominator, int begin_t, int end_t,
+			    struct string *curve_name);
+void PE_AddMotionVGaugeRate(int parts_no, float begin_numerator, float begin_denominator,
+			    float end_numerator, float end_denominator, int begin_t, int end_t);
+void PE_AddMotionVGaugeRate_curve(int parts_no, float begin_numerator, float begin_denominator,
+			    float end_numerator, float end_denominator, int begin_t, int end_t,
+			    struct string *curve_name);
+void PE_AddMotionNumeralNumber(int parts_no, int begin_n, int end_n, int begin_t, int end_t);
+void PE_AddMotionNumeralNumber_curve(int parts_no, int begin_n, int end_n, int begin_t,
+		int end_t, struct string *curve_name);
+void PE_AddMotionMagX(int parts_no, float begin, float end, int begin_t, int end_t);
+void PE_AddMotionMagX_curve(int parts_no, float begin, float end, int begin_t, int end_t,
+		struct string *curve_name);
+void PE_AddMotionMagY(int parts_no, float begin, float end, int begin_t, int end_t);
+void PE_AddMotionMagY_curve(int parts_no, float begin, float end, int begin_t, int end_t,
+		struct string *curve_name);
+void PE_AddMotionRotateX(int parts_no, float begin, float end, int begin_t, int end_t);
+void PE_AddMotionRotateX_curve(int parts_no, float begin, float end, int begin_t, int end_t,
+		struct string *curve_name);
+void PE_AddMotionRotateY(int parts_no, float begin, float end, int begin_t, int end_t);
+void PE_AddMotionRotateY_curve(int parts_no, float begin, float end, int begin_t, int end_t,
+		struct string *curve_name);
+void PE_AddMotionRotateZ(int parts_no, float begin, float end, int begin_t, int end_t);
+void PE_AddMotionRotateZ_curve(int parts_no, float begin, float end, int begin_t, int end_t,
+		struct string *curve_name);
+void PE_AddMotionVibrationSize(int parts_no, int begin_w, int begin_h, int begin_t, int end_t);
+void PE_AddMotionSound(int sound_no, int begin_t);
+void PE_AddWholeMotionVibrationSize(int begin_w, int begin_h, int begin_t, int end_t);
+void PE_BeginMotion(void);
+void PE_EndMotion(void);
+void PE_SetMotionTime(int t);
+void PE_SeekEndMotion(void);
+void PE_UpdateMotionTime(int time, bool skip);
+bool PE_IsMotion(void);
+int PE_GetMotionEndTime(void);
+void PE_PauseMotion(bool pause);
+
+// text.c
+bool PE_SetText(int parts_no, struct string *text, int state);
+bool PE_AddPartsText(int parts_no, struct string *text, int state);
+bool PE_SetPartsTextSurfaceArea(int parts_no, int x, int y, int w, int h, int state);
+bool PE_SetFont(int parts_no, int type, int size, int r, int g, int b, float bold_weight, int edge_r, int edge_g, int edge_b, float edge_weight, int state);
+bool PE_SetPartsFontType(int parts_no, int type, int state);
+bool PE_SetPartsFontSize(int parts_no, int size, int state);
+bool PE_SetPartsFontColor(int parts_no, int r, int g, int b, int state);
+bool PE_SetPartsFontBoldWeight(int parts_no, float bold_weight, int state);
+bool PE_SetPartsFontEdgeColor(int parts_no, int r, int g, int b, int state);
+bool PE_SetPartsFontEdgeWeight(int parts_no, float edge_weight, int state);
+bool PE_SetTextCharSpace(int parts_no, int char_space, int state);
+bool PE_SetTextLineSpace(int parts_no, int line_space, int state);
+
+// flash.c
+bool PE_ExistsFlashFile(struct string *flash_filename);
+bool PE_SetPartsFlash(int parts_no, struct string *flash_filename, int state);
+bool PE_IsPartsFlashEnd(int parts_no, int state);
+int PE_GetPartsFlashCurrentFrameNumber(int parts_no, int state);
+bool PE_BackPartsFlashBeginFrame(int parts_no, int state);
+bool PE_StepPartsFlashFinalFrame(int parts_no, int state);
+bool PE_SetPartsFlashAndStop(int parts_no, struct string *flash_filename, int state);
+bool PE_StopPartsFlash(int parts_no, int state);
+bool PE_StartPartsFlash(int parts_no, int state);
+bool PE_GoFramePartsFlash(int parts_no, int frame_no, int state);
+int PE_GetPartsFlashEndFrame(int parts_no, int state);
+
+// flat.c
+bool PE_ExistsFlatFile(struct string *filename);
+bool PE_SetPartsFlat(int parts_no, struct string *filename, int state);
+bool PE_IsPartsFlatEnd(int parts_no, int state);
+int PE_GetPartsFlatCurrentFrameNumber(int parts_no, int state);
+bool PE_BackPartsFlatBeginFrame(int parts_no, int state);
+bool PE_StepPartsFlatFinalFrame(int parts_no, int state);
+bool PE_SetPartsFlatSurfaceArea(int parts_no, int x, int y, int w, int h, int state);
+bool PE_SetPartsFlatAndStop(int parts_no, struct string *filename, int state);
+bool PE_StopPartsFlat(int parts_no, int state);
+bool PE_StartPartsFlat(int parts_no, int state);
+bool PE_GoFramePartsFlat(int parts_no, int frame_no, int state);
+int PE_GetPartsFlatEndFrame(int parts_no, int state);
+
+// layoutbox.c
+void PE_SetLayoutBoxLayoutType(int parts_no, int type);
+int PE_GetLayoutBoxLayoutType(int parts_no);
+void PE_SetLayoutBoxReturn(int parts_no, bool return_flag, int return_size);
+bool PE_IsLayoutBoxReturn(int parts_no);
+int PE_GetLayoutBoxReturnSize(int parts_no);
+void PE_SetLayoutBoxReturnF(int parts_no, bool return_flag, float return_size);
+float PE_GetLayoutBoxReturnSizeF(int parts_no);
+void PE_SetLayoutBoxAlign(int parts_no, int align);
+int PE_GetLayoutBoxAlign(int parts_no);
+void PE_SetComponentMargin(int parts_no, int top, int bottom, int left, int right);
+int PE_GetComponentMarginTop(int parts_no);
+int PE_GetComponentMarginBottom(int parts_no);
+int PE_GetComponentMarginLeft(int parts_no);
+int PE_GetComponentMarginRight(int parts_no);
+void PE_set_layoutbox_padding(int parts_no, int top, int bottom, int left, int right);
+void PE_v14_SetLayoutBoxPadding(int parts_no, int top, int bottom, int left, int right);
+int PE_get_layoutbox_padding_top(int parts_no);
+int PE_get_layoutbox_padding_bottom(int parts_no);
+int PE_get_layoutbox_padding_left(int parts_no);
+int PE_get_layoutbox_padding_right(int parts_no);
+
+#endif /* SYSTEM4_PARTS_H */

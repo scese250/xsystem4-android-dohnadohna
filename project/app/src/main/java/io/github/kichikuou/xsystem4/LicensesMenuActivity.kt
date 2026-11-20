@@ -14,7 +14,7 @@ class LicensesMenuActivity : Activity() {
         Entry("SDL", "SDL", "https://www.libsdl.org/"),
         Entry("cglm", "cglm", "https://github.com/recp/cglm"),
         Entry("FreeType", "freetype", "https://freetype.org/"),
-        Entry("libdeflate", "libdeflate", "https://github.com/ebiggers/libdeflate"),
+        Entry("libiconv", "libiconv", "https://www.gnu.org/software/libiconv/"),
         Entry("libffi", "libffi", "https://sourceware.org/libffi/"),
         Entry("libjpeg-turbo", "libjpeg-turbo", "https://libjpeg-turbo.org/"),
         Entry("libogg", "libogg", "https://xiph.org/ogg/"),

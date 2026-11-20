@@ -1,0 +1,744 @@
+/* Copyright (C) 2019 Nunuhara Cabbage <nunuhara@haniwa.technology>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, see <http://gnu.org/licenses/>.
+ */
+
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+#include "system4/string.h"
+#include "system4/utfsjis.h"
+
+#include "vm/page.h"
+#include "xsystem4.h"
+
+#include "AnteaterADVEngine.h"
+#include "iarray.h"
+#include "hll.h"
+
+/*
+ * AnteaterADVEngine
+ * -----------------
+ * This library was first introduced in Shaman's Sanctuary, however the
+ * functions existed as part of StoatSpriteEngine before that.
+ */
+
+struct adv_log {
+	unsigned nr_lines;
+	struct string **lines;
+	unsigned nr_voices;
+	int *voices;
+	// v14 (AnteaterADVLogList): a voice is a name and a filter name.
+	unsigned nr_voice_names;
+	struct string **voice_names;
+	struct string **voice_filters;
+};
+
+static bool enabled = true;
+
+// Trace (XSYS4_STAGE2_TRACE): what the backlog holds, so that a run's log
+// shows what a restart (system.Reset) left in it.
+static bool adv_trace(void)
+{
+	static int on = -1;
+	if (on < 0) {
+		const char *v = getenv("XSYS4_STAGE2_TRACE");
+		on = v && *v && strcmp(v, "0");
+	}
+	return on;
+}
+
+// A circular buffer of logs.
+#define LOG_BUFFER_SIZE 1000
+static struct adv_log *logs = NULL;
+static unsigned log_first;
+static unsigned log_last;
+
+static void AnteaterADVEngine_PreLink(void);
+
+static void init_log(struct adv_log *log)
+{
+	log->lines = malloc(sizeof(struct string*));
+	log->lines[0] = make_string("", 0);
+	log->nr_lines = 1;
+}
+
+static void free_log(struct adv_log *log)
+{
+	for (unsigned i = 0; i < log->nr_lines; i++) {
+		free_string(log->lines[i]);
+	}
+	free(log->lines);
+	free(log->voices);
+	for (unsigned i = 0; i < log->nr_voice_names; i++) {
+		free_string(log->voice_names[i]);
+		free_string(log->voice_filters[i]);
+	}
+	free(log->voice_names);
+	free(log->voice_filters);
+	log->nr_lines = 0;
+	log->lines = NULL;
+	log->nr_voices = 0;
+	log->voices = NULL;
+	log->nr_voice_names = 0;
+	log->voice_names = NULL;
+	log->voice_filters = NULL;
+}
+
+// Ensure there is at least one log allocated
+static void ensure_log(void)
+{
+	if (!logs) {
+		logs = xcalloc(LOG_BUFFER_SIZE, sizeof(struct adv_log));
+		init_log(&logs[0]);
+		log_first = log_last = 0;
+	}
+}
+
+static struct adv_log *current_log()
+{
+	ensure_log();
+	return &logs[log_last];
+}
+
+static struct string **current_line(struct adv_log *log)
+{
+	assert(log->nr_lines);
+	return &log->lines[log->nr_lines-1];
+}
+
+void ADVLogList_Clear(void)
+{
+	// XXX: this function works even if logging is disabled
+	if (!logs) return;
+	for (unsigned i = log_first;; i = (i + 1) % LOG_BUFFER_SIZE) {
+		free_log(&logs[i]);
+		if (i == log_last)
+			break;
+	}
+	free(logs);
+	logs = NULL;
+}
+
+void ADVLogList_AddText(struct string **text)
+{
+	if (!enabled) return;
+	struct string **line = current_line(current_log());
+	string_append(line, *text);
+}
+
+void ADVLogList_AddNewLine(void)
+{
+	if (!enabled) return;
+	struct adv_log *log = current_log();
+	log->lines = xrealloc_array(log->lines, log->nr_lines, log->nr_lines+1, sizeof(struct string*));
+	log->lines[log->nr_lines++] = make_string("", 0);
+}
+
+void ADVLogList_AddNewPage(void)
+{
+	if (!enabled) return;
+	log_last = (log_last + 1) % LOG_BUFFER_SIZE;
+	if (log_last == log_first) {
+		free_log(&logs[log_first]);
+		log_first = (log_first + 1) % LOG_BUFFER_SIZE;
+	}
+	init_log(&logs[log_last]);
+}
+
+void ADVLogList_AddVoice(int voice_no)
+{
+	if (!enabled) return;
+	struct adv_log *log = current_log();
+	log->voices = xrealloc_array(log->voices, log->nr_voices, log->nr_voices+1, sizeof(int));
+	log->voices[log->nr_voices++] = voice_no;
+}
+
+void ADVLogList_SetEnable(bool on)
+{
+	enabled = on;
+}
+
+bool ADVLogList_IsEnable(void)
+{
+	return enabled;
+}
+
+int ADVLogList_GetNumofADVLog(void)
+{
+	if (!logs) return 1;
+	return (log_last - log_first + LOG_BUFFER_SIZE) % LOG_BUFFER_SIZE + 1;
+}
+
+static struct adv_log *log_entry(int log_no)
+{
+	// NOTE: AnteaterADVEngine.dll segfaults on invalid index
+	ensure_log();
+	if (log_no < 0 || (unsigned)log_no >= ADVLogList_GetNumofADVLog())
+		VM_ERROR("Invalid log number: %d", log_no);
+	return &logs[(log_first + log_no) % LOG_BUFFER_SIZE];
+}
+
+int ADVLogList_GetNumofADVLogText(int log_no)
+{
+	return log_entry(log_no)->nr_lines;
+}
+
+void ADVLogList_GetADVLogText(int log_no, int line_no, struct string **text)
+{
+	struct adv_log *log = log_entry(log_no);
+	// NOTE: AnteaterADVEngine.dll segfaults on invalid index
+	if (line_no < 0 || (unsigned)line_no >= log->nr_lines)
+		VM_ERROR("Invalid line number: %d", line_no);
+
+	*text = string_ref(log->lines[line_no]);
+}
+
+int ADVLogList_GetNumofADVLogVoice(int log_no)
+{
+	return log_entry(log_no)->nr_voices;
+}
+
+int ADVLogList_GetADVLogVoice(int log_no, int voice_no)
+{
+	struct adv_log *log = log_entry(log_no);
+	if (voice_no < 0 || (unsigned)voice_no >= log->nr_voices)
+		VM_ERROR("Invalid voice number: %d", voice_no);
+
+	return log->voices[voice_no];
+}
+
+int ADVLogList_GetADVLogVoiceLast(int log_no)
+{
+	struct adv_log *log = log_entry(log_no);
+	unsigned nr_voices = log->nr_voices;
+	if (!nr_voices)
+		return 0;
+	return log->voices[nr_voices - 1];
+}
+
+bool ADVLogList_Save(struct page **iarray)
+{
+	// v14: Save can receive invalid/NULL page references during auto-save.
+	// Return true (success) without serializing — save not needed for playback.
+	if (!iarray || ain->version >= 14) {
+		return true;
+	}
+	// 0x64 <- 'A'
+	// 0x68 <- 'D'
+	// 0x76 <- 'L'
+	// 0x0  <- end of header
+	// 0x0  <- ???
+	// n    <- number of pages (min 1)
+	// n    <- number of lines in page (min 1)
+	// ...  <- strings (one per line)
+	// n    <- number of voices in page
+	// ...  <- integers (one per voice)
+	// 0x1  <- ???
+	ensure_log();
+
+	// encode log as array of integers
+	struct iarray_writer b;
+	iarray_init_writer(&b, "ADL");
+	iarray_write(&b, 0);
+	int nr_logs = ADVLogList_GetNumofADVLog();
+	iarray_write(&b, nr_logs);
+	for (unsigned i = 0; i < nr_logs; i++) {
+		struct adv_log *log = &logs[(log_first + i) % LOG_BUFFER_SIZE];
+		iarray_write(&b, log->nr_lines);
+		for (unsigned i = 0; i < log->nr_lines; i++) {
+			iarray_write_string(&b, log->lines[i]);
+		}
+		iarray_write(&b, log->nr_voices);
+		for (unsigned i = 0; i < log->nr_voices; i++) {
+			iarray_write(&b, log->voices[i]);
+		}
+	}
+	iarray_write(&b, 1);
+
+	// write integers into caller array variable
+	if (*iarray) {
+		delete_page_vars(*iarray);
+		free_page(*iarray);
+	}
+	*iarray = iarray_to_page(&b);
+	iarray_free_writer(&b);
+	return true;
+}
+
+bool ADVLogList_Load(struct page **data)
+{
+	if (!data || ain->version >= 14)
+		return false;
+	if (!(*data))
+		return false;
+	struct iarray_reader r;
+	iarray_init_reader(&r, *data, "ADL");
+	if (iarray_read(&r))
+		return false;
+
+	ADVLogList_Clear();
+
+	int nr_pages = iarray_read(&r);
+	if (nr_pages < 0 || nr_pages > 10000) {
+		WARNING("Invalid value for nr_pages: %d", nr_pages);
+		goto error;
+	}
+
+	// XXX: For whatever reason this function always creates a blank page 0,
+	//      and then loads the input pages after that. So a consecutive save
+	//      and load will increase all page numbers by 1.
+	ensure_log();
+
+	for (int i = 1; i < nr_pages + 1; i++) {
+		ADVLogList_AddNewPage();
+		struct adv_log *log = current_log();
+		int nr_lines = iarray_read(&r);
+		if (nr_lines <= 0 || nr_lines > 10000) {
+			WARNING("Invalid value for nr_lines[%d]: %d", i, nr_lines);
+			goto error;
+		}
+
+		log->lines = xcalloc(nr_lines, sizeof(struct string*));
+		for (int i = 0; i < nr_lines; i++) {
+			log->lines[i] = iarray_read_string(&r);
+		}
+		log->nr_lines = nr_lines;
+
+		int nr_voices = iarray_read(&r);
+		if (nr_voices < 0 || nr_voices > 10000) {
+			WARNING("Invalid value for nr_voices[%d]: %d", i, nr_voices);
+			goto error;
+		}
+
+		log->voices = xcalloc(nr_voices, sizeof(int));
+		for (int i = 0; i < nr_voices; i++) {
+			log->voices[i] = iarray_read(&r);
+		}
+		log->nr_voices = nr_voices;
+	}
+
+	if (iarray_read(&r) != 1 || r.error)
+		goto error;
+	return true;
+error:
+	ADVLogList_Clear();
+	return false;
+}
+
+#define SCENE_BUFFER_SIZE 500  // Maximum in Rance 02
+static struct page **scenes = NULL;
+static unsigned scene_first = 0;
+static unsigned scene_last = 0;
+
+
+static int scene_struct_no(void)
+{
+	static int no = -1;
+	if (no < 0) {
+		char *s = utf8_to_game("画面保管_t", 0);
+		no = ain_get_struct(ain, s);
+		free(s);
+		if (no < 0)
+			VM_ERROR("Missing definition for struct 画面保管_t");
+	}
+	return no;
+}
+
+bool ADVSceneKeeper_AddADVScene(struct page **page)
+{
+	assert(*page);
+	assert((*page)->type == STRUCT_PAGE);
+	if ((*page)->index != scene_struct_no()) {
+		WARNING("Invalid struct type: %d", (*page)->index);
+		return false;
+	}
+
+	if (!scenes) {
+		scenes = xcalloc(SCENE_BUFFER_SIZE, sizeof(struct page*));
+		scene_first = 0;
+		scene_last = 0;
+	} else {
+		scene_last = (scene_last + 1) % SCENE_BUFFER_SIZE;
+		if (scene_last == scene_first) {
+			free_page(scenes[scene_first]);
+			scenes[scene_first] = NULL;
+			scene_first = (scene_first + 1) % SCENE_BUFFER_SIZE;
+		}
+	}
+
+	// serialize
+	struct iarray_writer out;
+	iarray_init_writer(&out, "SCN");
+	iarray_write_struct(&out, *page, false);
+	scenes[scene_last] = iarray_to_page(&out);
+	iarray_free_writer(&out);
+
+	return true;
+}
+
+int ADVSceneKeeper_GetNumofADVScene(void)
+{
+	if (!scenes)
+		return 0;
+	return (scene_last - scene_first + SCENE_BUFFER_SIZE) % SCENE_BUFFER_SIZE + 1;
+}
+
+bool ADVSceneKeeper_GetADVScene(int index, struct page **page)
+{
+	if (!scenes || index < 0 || (unsigned)index >= ADVSceneKeeper_GetNumofADVScene())
+		return false;
+
+	unsigned i = (scene_first + index) % SCENE_BUFFER_SIZE;
+
+	// deserialize
+	struct iarray_reader in;
+	if (!iarray_init_reader(&in, scenes[i], "SCN"))
+		return false;
+
+	if (*page) {
+		delete_page_vars(*page);
+		free_page(*page);
+	}
+
+	*page = iarray_read_struct(&in, scene_struct_no(), false);
+	return !in.error;
+}
+
+void ADVSceneKeeper_Clear(void)
+{
+	if (!scenes)
+		return;
+	for (unsigned i = scene_first;; i = (i + 1) % SCENE_BUFFER_SIZE) {
+		if (scenes[i])
+			free_page(scenes[i]);
+		if (i == scene_last)
+			break;
+	}
+	free(scenes);
+	scenes = NULL;
+}
+
+bool ADVSceneKeeper_Save(struct page **iarray)
+{
+	if (!iarray || ain->version >= 14)
+		return true;
+	if (*iarray) {
+		delete_page_vars(*iarray);
+		free_page(*iarray);
+	}
+	// NOTE: AnteaterADVEngine.dll knows about the structure of the input;
+	//       this implementation just serializes whatever it's given. Note
+	//       also that the structure of 画面保管_t objects differs between games.
+	struct iarray_writer w;
+	iarray_init_writer(&w, "SCS");
+	iarray_write(&w, 0); // version
+	int nr_scenes = ADVSceneKeeper_GetNumofADVScene();
+	iarray_write(&w, nr_scenes);
+	for (int i = 0; i < nr_scenes; i++) {
+		unsigned idx = (scene_first + i) % SCENE_BUFFER_SIZE;
+		iarray_write_array(&w, scenes[idx]);
+	}
+	*iarray = iarray_to_page(&w);
+	iarray_free_writer(&w);
+	return true;
+}
+
+bool ADVSceneKeeper_Load(struct page **iarray)
+{
+	if (!iarray || ain->version >= 14)
+		return false;
+	if (!(*iarray))
+		return false;
+
+	ADVSceneKeeper_Clear();
+
+	struct iarray_reader r;
+	iarray_init_reader(&r, *iarray, "SCS");
+
+	if (iarray_read(&r) != 0) {
+		WARNING("Unsupported version of ADVSceneKeeper 'SCS' data");
+		goto error;
+	}
+
+	int nr_scenes = iarray_read(&r);
+	if (nr_scenes < 0 || nr_scenes > 10000)
+		goto error;
+
+	if (nr_scenes == 0)
+		return true;
+
+	int start_offset = 0;
+	if (nr_scenes > SCENE_BUFFER_SIZE) {
+		start_offset = nr_scenes - SCENE_BUFFER_SIZE;
+	}
+
+	struct ain_type type = { .data = AIN_ARRAY_INT, .struc = 0, .rank = 0 };
+	for (int i = 0; i < start_offset; i++) {
+		struct page *p = iarray_read_array(&r, &type);
+		if (r.error)
+			goto error;
+		free_page(p);
+	}
+
+	int scenes_to_load = nr_scenes - start_offset;
+	if (scenes_to_load > 0) {
+		scenes = xcalloc(SCENE_BUFFER_SIZE, sizeof(struct page*));
+		scene_first = 0;
+		scene_last = scenes_to_load - 1;
+
+		for (int i = 0; i < scenes_to_load; i++) {
+			scenes[i] = iarray_read_array(&r, &type);
+			if (r.error)
+				goto error;
+		}
+	}
+
+	return true;
+error:
+	ADVSceneKeeper_Clear();
+	return false;
+}
+
+static void AnteaterADVEngine_ModuleFini(void)
+{
+	ADVSceneKeeper_Clear();
+	// v14 (AnteaterADVLogList): the backlog does not cross a restart
+	// (system.Reset). The original frees the log object with the other
+	// engines (0x4b3248 -> 0x447120, in 0x4b30f0) and the next run gets a
+	// new one (0x447086). The script clears the log itself only when it
+	// loads a save, so a new game after a return to the title would show,
+	// and save, the pages of the run before. Games before v14 keep the
+	// buffer over a restart, as they always did.
+	if (ain->version >= 14) {
+		if (adv_trace())
+			NOTICE("S2 backlog reset pages=%d", logs ? ADVLogList_GetNumofADVLog() : 0);
+		ADVLogList_Clear();
+		enabled = true;
+	}
+}
+
+static void AnteaterADVEngine_ADVLogList_AddText_with_window(struct string **text, possibly_unused int window_no)
+{
+	ADVLogList_AddText(text);
+}
+
+// v14 wrappers: short names with different signatures
+static void AnteaterADVEngine_v14_AddText(struct string *text, struct string *window_name)
+{
+	struct string *ref = text;
+	ADVLogList_AddText(&ref);
+}
+
+/*
+ * v14 (AnteaterADVLogList is built into the EXE; dispatcher 0x446d60, cases
+ * at 0x447018). A page is a list of lines and starts with one empty line
+ * (0x448010 -> 0x4476a0), and three functions leave out what has no text
+ * yet:
+ *   - GetNumofADVLog (case 7 -> 0x447180) does not count the last page while
+ *     that has no line but an empty last one (0x4471a9 .. 0x4471b8). Clear
+ *     (case 0: 0x4472d0, then 0x447e60 leaves one new page) is followed by 0;
+ *   - GetNumofADVLogText (case 8 -> 0x4476f0) does not count a page's last
+ *     line when it is empty (0x447735 .. 0x447740);
+ *   - AddNewPage (case 3 -> 0x447860) does nothing while the page being
+ *     written has no such line (0x4478bf) or its lines have no byte
+ *     (0x4478e2).
+ * The scripts call AddNewPage at the end of each key wait (message::detail::A
+ * and AA), so the last page is empty whenever the backlog is opened from the
+ * menu. Counted, it gave the backlog an empty line and a separator of its
+ * own, and the 16 rows began two rows later than the original's.
+ * The functions of the older games' DLL above keep their rules, also behind
+ * these names before v14. Not done: the original's Clear also enables the
+ * log again (0x446dc0; no script of the game disables it), and its AddText
+ * calls AddNewPage first when the window name is not the last one's
+ * (0x447750).
+ */
+
+// The lines of a page as the v14 functions count them.
+static unsigned v14_log_lines(struct adv_log *log)
+{
+	unsigned n = log->nr_lines;
+	if (n && !log->lines[n - 1]->size)
+		n--;
+	return n;
+}
+
+static int v14_num_of_adv_log(void)
+{
+	// Nothing logged yet, or cleared: the original's one new page.
+	if (!logs)
+		return 0;
+	int nr_logs = ADVLogList_GetNumofADVLog();
+	return v14_log_lines(&logs[log_last]) ? nr_logs : nr_logs - 1;
+}
+
+static int AnteaterADVEngine_v14_GetNumofADVLog(void)
+{
+	if (ain->version < 14)
+		return ADVLogList_GetNumofADVLog();
+	int n = v14_num_of_adv_log();
+	// Traced when the count the script is given changes.
+	static int traced = -1;
+	if (n != traced && adv_trace()) {
+		NOTICE("S2 backlog pages=%d", n);
+		traced = n;
+	}
+	return n;
+}
+
+// The page number is not checked by the original; log_entry's check stays,
+// against all the pages there are.
+static int AnteaterADVEngine_v14_GetNumofADVLogText(int log_no)
+{
+	if (ain->version < 14)
+		return ADVLogList_GetNumofADVLogText(log_no);
+	return v14_log_lines(log_entry(log_no));
+}
+
+static void AnteaterADVEngine_v14_AddNewPage(void)
+{
+	if (ain->version < 14) {
+		ADVLogList_AddNewPage();
+		return;
+	}
+	if (!enabled)
+		return;
+	struct adv_log *log = current_log();
+	unsigned nr_lines = v14_log_lines(log);
+	unsigned nr_bytes = 0;
+	for (unsigned i = 0; i < nr_lines; i++)
+		nr_bytes += log->lines[i]->size;
+	if (!nr_bytes)
+		return;
+	ADVLogList_AddNewPage();
+}
+
+/* v14: void AddVoice(string VoiceName, string VoiceFilterName). A voice is a
+ * name and a filter name; message::detail::VOICE adds the one it plays to the
+ * page being written (case 4, 0x446e59 .. 0x446ea0: pushed to the last
+ * page's two lists while the log is enabled), and the backlog reads them back
+ * (SBackLogUnitModelManager@GetVoiceNameList): a line with a voice whose file
+ * exists is drawn in the voice font and plays it when clicked
+ * (CBackLogUnit@IsExistVoice). The original's GetADVLogVoice (0x447240) does
+ * not check the index; here one out of range gives "".
+ * Nothing of the log is saved in v14: Save returns true without writing and
+ * Load returns false without reading or clearing (see both above), so the
+ * pages and their voices are the ones in memory before a load. What the
+ * original's Save and Load (cases 13 and 14, 0x4479c0 and 0x447b60) keep was
+ * not read. */
+static void AnteaterADVEngine_v14_AddVoice(struct string *voice_name, struct string *voice_filter)
+{
+	if (!enabled)
+		return;
+	struct adv_log *log = current_log();
+	log->voice_names = xrealloc_array(log->voice_names, log->nr_voice_names,
+			log->nr_voice_names + 1, sizeof(struct string*));
+	log->voice_filters = xrealloc_array(log->voice_filters, log->nr_voice_names,
+			log->nr_voice_names + 1, sizeof(struct string*));
+	log->voice_names[log->nr_voice_names] = string_dup(voice_name);
+	log->voice_filters[log->nr_voice_names] = string_dup(voice_filter);
+	log->nr_voice_names++;
+}
+
+static int AnteaterADVEngine_v14_GetNumofADVLogVoice(int log_no)
+{
+	return log_entry(log_no)->nr_voice_names;
+}
+
+static struct string *AnteaterADVEngine_v14_GetADVLogText(int log_no, int line_no)
+{
+	struct string *text = NULL;
+	ADVLogList_GetADVLogText(log_no, line_no, &text);
+	return text;
+}
+
+static struct string *AnteaterADVEngine_v14_GetADVLogVoice(int log_no, int index)
+{
+	struct adv_log *log = log_entry(log_no);
+	if (index < 0 || (unsigned)index >= log->nr_voice_names)
+		return string_ref(&EMPTY_STRING);
+	return string_ref(log->voice_names[index]);
+}
+
+static struct string *AnteaterADVEngine_v14_GetADVLogVoiceFilter(int log_no, int index)
+{
+	struct adv_log *log = log_entry(log_no);
+	if (index < 0 || (unsigned)index >= log->nr_voice_names)
+		return string_ref(&EMPTY_STRING);
+	return string_ref(log->voice_filters[index]);
+}
+
+HLL_LIBRARY(AnteaterADVEngine,
+	    HLL_EXPORT(_PreLink, AnteaterADVEngine_PreLink),
+	    HLL_EXPORT(_ModuleFini, AnteaterADVEngine_ModuleFini),
+	    // Legacy names (pre-v14)
+	    HLL_EXPORT(ADVLogList_Clear, ADVLogList_Clear),
+	    HLL_EXPORT(ADVLogList_AddText, ADVLogList_AddText),
+	    HLL_EXPORT(ADVLogList_AddNewLine, ADVLogList_AddNewLine),
+	    HLL_EXPORT(ADVLogList_AddNewPage, ADVLogList_AddNewPage),
+	    HLL_EXPORT(ADVLogList_AddVoice, ADVLogList_AddVoice),
+	    HLL_EXPORT(ADVLogList_SetEnable, ADVLogList_SetEnable),
+	    HLL_EXPORT(ADVLogList_IsEnable, ADVLogList_IsEnable),
+	    HLL_EXPORT(ADVLogList_GetNumofADVLog, ADVLogList_GetNumofADVLog),
+	    HLL_EXPORT(ADVLogList_GetNumofADVLogText, ADVLogList_GetNumofADVLogText),
+	    HLL_EXPORT(ADVLogList_GetADVLogText, ADVLogList_GetADVLogText),
+	    HLL_EXPORT(ADVLogList_GetNumofADVLogVoice, ADVLogList_GetNumofADVLogVoice),
+	    HLL_EXPORT(ADVLogList_GetADVLogVoice, ADVLogList_GetADVLogVoice),
+	    HLL_EXPORT(ADVLogList_Save, ADVLogList_Save),
+	    HLL_EXPORT(ADVLogList_Load, ADVLogList_Load),
+	    HLL_EXPORT(ADVSceneKeeper_AddADVScene, ADVSceneKeeper_AddADVScene),
+	    HLL_EXPORT(ADVSceneKeeper_GetNumofADVScene, ADVSceneKeeper_GetNumofADVScene),
+	    HLL_EXPORT(ADVSceneKeeper_GetADVScene, ADVSceneKeeper_GetADVScene),
+	    HLL_EXPORT(ADVSceneKeeper_Clear, ADVSceneKeeper_Clear),
+	    HLL_EXPORT(ADVSceneKeeper_Save, ADVSceneKeeper_Save),
+	    HLL_EXPORT(ADVSceneKeeper_Load, ADVSceneKeeper_Load),
+	    // v14 short names (AnteaterADVLogList)
+	    HLL_EXPORT(Clear, ADVLogList_Clear),
+	    HLL_EXPORT(AddText, AnteaterADVEngine_v14_AddText),
+	    HLL_EXPORT(AddNewLine, ADVLogList_AddNewLine),
+	    HLL_EXPORT(AddNewPage, AnteaterADVEngine_v14_AddNewPage),
+	    HLL_EXPORT(AddVoice, AnteaterADVEngine_v14_AddVoice),
+	    HLL_EXPORT(SetEnable, ADVLogList_SetEnable),
+	    HLL_EXPORT(IsEnable, ADVLogList_IsEnable),
+	    HLL_EXPORT(GetNumofADVLog, AnteaterADVEngine_v14_GetNumofADVLog),
+	    HLL_EXPORT(GetNumofADVLogText, AnteaterADVEngine_v14_GetNumofADVLogText),
+	    HLL_EXPORT(GetADVLogText, AnteaterADVEngine_v14_GetADVLogText),
+	    HLL_EXPORT(GetNumofADVLogVoice, AnteaterADVEngine_v14_GetNumofADVLogVoice),
+	    HLL_EXPORT(GetADVLogVoice, AnteaterADVEngine_v14_GetADVLogVoice),
+	    HLL_EXPORT(GetADVLogVoiceFilter, AnteaterADVEngine_v14_GetADVLogVoiceFilter),
+	    HLL_EXPORT(Save, ADVLogList_Save),
+	    HLL_EXPORT(Load, ADVLogList_Load)
+	);
+
+static struct ain_hll_function *get_fun(int libno, const char *name)
+{
+	int fno = ain_get_library_function(ain, libno, name);
+	return fno >= 0 ? &ain->libraries[libno].functions[fno] : NULL;
+}
+
+static void AnteaterADVEngine_PreLink(void)
+{
+	struct ain_hll_function *fun;
+	int libno = ain_get_library(ain, "AnteaterADVEngine");
+	if (libno < 0)
+		libno = ain_get_library(ain, "AnteaterADVLogList");
+	if (libno < 0)
+		return;
+
+	// Legacy: ADVLogList_AddText with window_no argument
+	fun = get_fun(libno, "ADVLogList_AddText");
+	if (fun && fun->nr_arguments == 2) {
+		static_library_replace(&lib_AnteaterADVEngine, "ADVLogList_AddText", AnteaterADVEngine_ADVLogList_AddText_with_window);
+	}
+}

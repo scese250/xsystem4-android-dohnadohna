@@ -20,6 +20,9 @@ class XSystem4Activity : SDLActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (!SDLActivity.mBrokenLibraries) {
+            SDLActivity.nativeSetenv("SDL_ANDROID_TRAP_BACK_BUTTON", "1")
+        }
         // Workaround for https://github.com/libsdl-org/SDL/issues/8995
         SDLActivity.setWindowStyle(true)
     }

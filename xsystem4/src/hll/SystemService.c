@@ -1,0 +1,1131 @@
+/* Copyright (C) 2019 Nunuhara Cabbage <nunuhara@haniwa.technology>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, see <http://gnu.org/licenses/>.
+ */
+
+#include <string.h>
+#include <assert.h>
+#include <time.h>
+#include <SDL.h>
+
+#include "system4/ain.h"
+#include "system4/cg.h"
+#include "system4/string.h"
+#include "system4/utfsjis.h"
+
+#include "cJSON.h"
+#include "audio.h"
+#include "input.h"
+#include "frame_pacing.h"
+#include "gfx/gfx.h"
+#include "mixer.h"
+#include "savedata.h"
+#include "scene.h"
+#include "sprite.h"
+#include "vm.h"
+#include "vm/page.h"
+#include "xsystem4.h"
+#include "hll.h"
+#include "system4/file.h"
+
+static int SystemService_GetMixerName(int n, struct string **name)
+{
+	const char *r = mixer_get_name(n);
+	if (!r)
+		return 0;
+	*name = make_string(r, strlen(r));
+	return 1;
+}
+
+static bool SystemService_GetMixerDefaultVolume(int n, int *volume)
+{
+	if (n < 0 || (unsigned)n >= config.mixer_nr_channels)
+		return false;
+	*volume = config.mixer_volumes[n];
+	return true;
+}
+
+static bool SystemService_SetMixerName(int n, struct string *name)
+{
+	return mixer_set_name(n, name->text);
+}
+
+static int SystemService_GetGameVersion(void)
+{
+	return ain->game_version;
+}
+
+// v14 declares: string GetGameName(void) — return directly (out-param shape
+// corrupts the 0-arg libffi call frame; same class as Fix #263).
+static struct string *SystemService_GetGameName(void)
+{
+	return cstr_to_string(config.game_name ? config.game_name : "");
+}
+
+static bool SystemService_AddURLMenu(struct string *title, struct string *url)
+{
+	/* URL menu not applicable on macOS — silently ignore */
+	return true;
+}
+
+static bool SystemService_IsFullScreen(void)
+{
+	return gfx_is_fullscreen();
+}
+
+static bool SystemService_ChangeNormalScreen(void)
+{
+	return gfx_set_fullscreen(false);
+}
+
+static bool SystemService_ChangeFullScreen(void)
+{
+	return gfx_set_fullscreen(true);
+}
+
+static bool SystemService_InitMainWindowPosAndSize(void)
+{
+	/* window position managed by SDL/window manager */
+	return true;
+}
+
+// From parts — avoid full include of parts_internal.h. v14 games drive
+// the whole frame through SystemService.UpdateView; route it into the
+// upstream parts update pipeline.
+extern void PE_Update(int passed_time, bool message_window_show);
+extern void PE_UpdateMotionTime(int time, bool skip);
+extern bool parts_message_window_show;
+
+// One game frame ends here, as in the original (0x4c5450): wait (the 60 fps
+// limiter, frame_pacing.h) and present the frame once. The frame was
+// already drawn by ChipmunkSpriteEngine.Update or TRANS_Update, and the parts
+// were already advanced by PartsEngine.UpdateComponent with the game's own
+// passed time (view::detail::View_Update calls both first). Advance and draw
+// here only what did not happen since the previous UpdateView.
+static void screensaver_update(void);
+static bool SystemService_UpdateView(void)
+{
+	// Compute elapsed time for animation/motion updates
+	static struct timespec last_time = {0};
+	int passed_time = 0;
+	struct timespec now;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	if (last_time.tv_sec > 0) {
+		double delta_ms = (now.tv_sec - last_time.tv_sec) * 1000.0
+			+ (now.tv_nsec - last_time.tv_nsec) / 1e6;
+		passed_time = (int)delta_ms;
+		if (passed_time < 0) passed_time = 0;
+		if (passed_time > 100) passed_time = 100;
+	}
+	last_time = now;
+
+	frame_pacing_update_view();
+	handle_events();
+	screensaver_update();
+	sprite_call_plugins();
+	bool advanced = frame_pacing_take_parts_updated();
+	if (!advanced) {
+		// Motion timing first, then the upstream parts pipeline: component
+		// updates, audio, loop animations, input state, render update.
+		PE_UpdateMotionTime(passed_time, false);
+		PE_Update(passed_time, parts_message_window_show);
+	}
+
+	enum frame_pacing_frame frame = frame_pacing_take_frame();
+	if (frame == FRAME_PACING_SKIPPED) {
+		frame_pacing_wait();
+		return true;
+	}
+	if (frame != FRAME_PACING_DRAWN || !advanced) {
+		scene_render();
+		scene_is_dirty = false;
+	}
+	gfx_flush(); // let the GPU draw while the limiter sleeps
+	frame_pacing_wait();
+	gfx_swap();
+	return true;
+}
+
+static int SystemService_GetViewWidth(void)
+{
+	return config.view_width;
+}
+
+static int SystemService_GetViewHeight(void)
+{
+	return config.view_height;
+}
+
+static bool SystemService_MoveMouseCursorPosImmediately(int x, int y)
+{
+	mouse_set_pos(x, y);
+	return true;
+}
+
+static bool SystemService_SetHideMouseCursorByGame(bool hide)
+{
+	return mouse_show_cursor(!hide);
+}
+
+//bool SystemService_GetHideMouseCursorByGame(void);
+static bool SystemService_SetUsePower2Texture(bool use)
+{
+	/* modern GPUs support NPOT textures — no-op */
+	return true;
+}
+//bool SystemService_GetUsePower2Texture(void);
+
+enum window_settings_asect_ratio {
+	ASPECT_RATIO_NORMAL,
+	ASPECT_RATIO_FIXED
+};
+
+enum window_settings_scaling_type {
+	SCALING_NORMAL,
+	SCALING_BICUBIC,
+};
+
+struct window_settings {
+	enum window_settings_asect_ratio aspect_ratio;
+	enum window_settings_scaling_type scaling_type;
+	bool wait_vsync;
+	bool record_pos_size;
+	bool minimize_by_full_screen_inactive;
+	bool back_to_title_confirm;
+	bool close_game_confirm;
+};
+
+static struct window_settings window_settings = {
+	.aspect_ratio = ASPECT_RATIO_NORMAL,
+	.scaling_type = SCALING_NORMAL,
+	.wait_vsync = false,
+	.record_pos_size = false,
+	.minimize_by_full_screen_inactive = true,
+	.back_to_title_confirm = true,
+	.close_game_confirm = true,
+};
+
+enum window_settings_id {
+	WINDOW_SETTINGS_ASPECT_RATIO = 0,
+	WINDOW_SETTINGS_SCALING_TYPE = 1,
+	WINDOW_SETTINGS_WAIT_VSYNC = 2,
+	WINDOW_SETTINGS_RECORD_POS_SIZE = 3,
+	WINDOW_SETTINGS_MINIMIZE_BY_FULL_SCREEN_INACTIVE = 4,
+	WINDOW_SETTINGS_BACK_TO_TITLE_CONFIRM = 5,
+	WINDOW_SETTINGS_CLOSE_GAME_CONFIRM = 6,
+};
+
+/*
+ * v14 (Dohna Dohna) numbers its window settings differently from the table
+ * above.  The original takes these five types and refuses every other one:
+ *
+ *   0  keep the aspect ratio                       0 or 1    starts as 1
+ *   1  scaling type (0 default, 1 bicubic)         a number  starts as 1
+ *   2  minimize a deactivated full-screen window   0 or 1    starts as 1
+ *   3  ask before "back to title" (window menu)    0 or 1    starts as 1
+ *   4  ask before closing the game                 0 or 1    starts as 1
+ *
+ * A setter keeps value != 0 for the four flags and the number itself for the
+ * scaling type; a getter returns what is kept.  Type 2 is not the vertical
+ * sync of the older table, and 3 and 4 are not its 5 and 6.
+ *
+ * This table was read from Dohna Dohna's executable only.  Whether another
+ * v14 game uses it or still the older one is not known; the older one was
+ * written from the games before it.
+ *
+ * Types 0 to 3 are kept only and have no effect here: the view always keeps
+ * its aspect ratio and has one scaling filter, a full-screen window is not
+ * minimized when it is deactivated, and there is no window menu. Type 4 is
+ * read by the script before its own "quit the game" and, as in the original
+ * (0x4be920 reads the byte that type 4 sets, [wnd+0x86]), by the window
+ * when it is closed: input_set_close_confirm.
+ */
+enum window_settings_v14_id {
+	WINDOW_SETTINGS_V14_ASPECT_RATIO = 0,
+	WINDOW_SETTINGS_V14_SCALING_TYPE = 1,
+	WINDOW_SETTINGS_V14_MINIMIZE_BY_FULL_SCREEN_INACTIVE = 2,
+	WINDOW_SETTINGS_V14_BACK_TO_TITLE_CONFIRM = 3,
+	WINDOW_SETTINGS_V14_CLOSE_GAME_CONFIRM = 4,
+	NR_WINDOW_SETTINGS_V14
+};
+
+static int window_settings_v14[NR_WINDOW_SETTINGS_V14] = { 1, 1, 1, 1, 1 };
+
+static const char *const window_settings_v14_keys[NR_WINDOW_SETTINGS_V14] = {
+	[WINDOW_SETTINGS_V14_ASPECT_RATIO] = "aspect_ratio",
+	[WINDOW_SETTINGS_V14_SCALING_TYPE] = "scaling_type",
+	[WINDOW_SETTINGS_V14_MINIMIZE_BY_FULL_SCREEN_INACTIVE] = "minimize_by_full_screen_inactive",
+	[WINDOW_SETTINGS_V14_BACK_TO_TITLE_CONFIRM] = "back_to_title_confirm",
+	[WINDOW_SETTINGS_V14_CLOSE_GAME_CONFIRM] = "close_game_confirm",
+};
+
+static bool window_settings_is_v14(void)
+{
+	return ain->version >= 14;
+}
+
+/*
+ * The v14 values live in an object of their own, "v14", so that they are
+ * never mixed up with what the older table wrote.  A WindowSetting.json from
+ * before this table existed holds "wait_vsync", which in this game was the
+ * check box of type 2 and never a vertical sync setting: it is not read, and
+ * the next write leaves it out.
+ */
+#define WINDOW_SETTINGS_V14_KEY "v14"
+
+static void save_window_settings_v14(void)
+{
+	cJSON *root = cJSON_CreateObject();
+	cJSON *v14 = cJSON_AddObjectToObject(root, WINDOW_SETTINGS_V14_KEY);
+	for (int i = 0; i < NR_WINDOW_SETTINGS_V14; i++)
+		cJSON_AddNumberToObject(v14, window_settings_v14_keys[i], window_settings_v14[i]);
+	save_json("WindowSetting.json", root);
+	cJSON_Delete(root);
+}
+
+static void load_window_settings_v14(void)
+{
+	cJSON *root = load_json("WindowSetting.json");
+	if (!root)
+		return;
+	cJSON *v14 = cJSON_GetObjectItem(root, WINDOW_SETTINGS_V14_KEY);
+	for (int i = 0; cJSON_IsObject(v14) && i < NR_WINDOW_SETTINGS_V14; i++) {
+		cJSON *v = cJSON_GetObjectItem(v14, window_settings_v14_keys[i]);
+		if (!cJSON_IsNumber(v))
+			continue;
+		window_settings_v14[i] = i == WINDOW_SETTINGS_V14_SCALING_TYPE ? v->valueint : v->valueint != 0;
+	}
+	cJSON_Delete(root);
+}
+
+static bool window_setting_v14_set(int type, int value)
+{
+	if (type < 0 || type >= NR_WINDOW_SETTINGS_V14) {
+		WARNING("Invalid window setting type: %d", type);
+		return false;
+	}
+	if (type != WINDOW_SETTINGS_V14_SCALING_TYPE)
+		value = value != 0;
+	// The original writes its file when the window closes; here a setting
+	// is written when it changes, and the settings page setting the same
+	// value every frame writes nothing.
+	if (window_settings_v14[type] == value)
+		return true;
+	window_settings_v14[type] = value;
+	if (type == WINDOW_SETTINGS_V14_CLOSE_GAME_CONFIRM)
+		input_set_close_confirm(value);
+	save_window_settings_v14();
+	return true;
+}
+
+static bool window_setting_v14_get(int type, int *value)
+{
+	if (type < 0 || type >= NR_WINDOW_SETTINGS_V14) {
+		WARNING("Invalid window setting type: %d", type);
+		return false;
+	}
+	if (value)
+		*value = window_settings_v14[type];
+	return true;
+}
+
+static void save_window_settings(void)
+{
+	cJSON *root = cJSON_CreateObject();
+	cJSON_AddBoolToObject(root, "wait_vsync", window_settings.wait_vsync);
+	save_json("WindowSetting.json", root);
+	cJSON_Delete(root);
+}
+
+static void load_window_settings(void)
+{
+	if (window_settings_is_v14()) {
+		load_window_settings_v14();
+		input_set_close_confirm(window_settings_v14[WINDOW_SETTINGS_V14_CLOSE_GAME_CONFIRM]);
+		return;
+	}
+	cJSON *root = load_json("WindowSetting.json");
+	if (!root)
+		return;
+	cJSON *v;
+	if ((v = cJSON_GetObjectItem(root, "wait_vsync"))) {
+		window_settings.wait_vsync = cJSON_IsTrue(v);
+		gfx_set_wait_vsync(window_settings.wait_vsync);
+	}
+	cJSON_Delete(root);
+}
+
+static bool SystemService_SetWindowSetting(int type, int value)
+{
+	if (window_settings_is_v14())
+		return window_setting_v14_set(type, value);
+	switch (type) {
+	case WINDOW_SETTINGS_ASPECT_RATIO:
+		window_settings.aspect_ratio = value;
+		break;
+	case WINDOW_SETTINGS_SCALING_TYPE:
+		window_settings.scaling_type = value;
+		break;
+	case WINDOW_SETTINGS_WAIT_VSYNC:
+		window_settings.wait_vsync = value;
+		gfx_set_wait_vsync(value);
+		break;
+	case WINDOW_SETTINGS_RECORD_POS_SIZE:
+		window_settings.record_pos_size = value;
+		break;
+	case WINDOW_SETTINGS_MINIMIZE_BY_FULL_SCREEN_INACTIVE:
+		window_settings.minimize_by_full_screen_inactive = value;
+		break;
+	case WINDOW_SETTINGS_BACK_TO_TITLE_CONFIRM:
+		window_settings.back_to_title_confirm = value;
+		break;
+	case WINDOW_SETTINGS_CLOSE_GAME_CONFIRM:
+		window_settings.close_game_confirm = value;
+		break;
+	default:
+		WARNING("Invalid window setting type: %d", type);
+		return false;
+	}
+	save_window_settings();
+	return true;
+}
+
+// v14: AIN declares arg[1] as AIN_WRAP — pointer-based interface
+static bool SystemService_GetWindowSetting(int type, int *value)
+{
+	if (window_settings_is_v14())
+		return window_setting_v14_get(type, value);
+	int v;
+	switch (type) {
+	case WINDOW_SETTINGS_ASPECT_RATIO:
+		v = window_settings.aspect_ratio; break;
+	case WINDOW_SETTINGS_SCALING_TYPE:
+		v = window_settings.scaling_type; break;
+	case WINDOW_SETTINGS_WAIT_VSYNC:
+		v = window_settings.wait_vsync; break;
+	case WINDOW_SETTINGS_RECORD_POS_SIZE:
+		v = window_settings.record_pos_size; break;
+	case WINDOW_SETTINGS_MINIMIZE_BY_FULL_SCREEN_INACTIVE:
+		v = window_settings.minimize_by_full_screen_inactive; break;
+	case WINDOW_SETTINGS_BACK_TO_TITLE_CONFIRM:
+		v = window_settings.back_to_title_confirm; break;
+	case WINDOW_SETTINGS_CLOSE_GAME_CONFIRM:
+		v = window_settings.close_game_confirm; break;
+	default:
+		WARNING("Invalid window setting type: %d", type);
+		return false;
+	}
+	if (value) *value = v;
+	return true;
+}
+
+// XXX: Values for 'type' above 1 are invalid in Haru Urare, may be different in other games
+// v14 (Dohna Dohna): the settings' input page keeps three of them, 0 (hide a
+// cursor that does not move), 1 (hide it on key or pad input) and 2 (hide it
+// when the next message is shown), and writes each from its check box and
+// reads it back every frame (config::detail::SetHideUnmoveMouseCursor,
+// SetHideKeyOrJoypadInputMouseCursor, SetHideStepMessageMouseCursor): a type
+// that is refused unchecks its box at once. The original of that game takes
+// exactly these three types (0x4c3230, 0x4c3300), keeps a flag for each (all
+// start as 0), returns 0 or 1 and refuses any other type; what the flags do
+// is in src/input.c (mouse_cursor_*), and they are kept in a file of their
+// own (below). Other versions keep their existing types in memory.
+#define NR_MOUSE_CURSOR_CONFIG 3
+static int mouse_cursor_config[NR_MOUSE_CURSOR_CONFIG] = {0};
+
+static int nr_mouse_cursor_config(void)
+{
+	return ain->version >= 14 ? NR_MOUSE_CURSOR_CONFIG : 1;
+}
+
+static bool SystemService_SetMouseCursorConfig(int type, int value)
+{
+	if (type < 0 || type >= nr_mouse_cursor_config()) {
+		WARNING("Invalid mouse cursor config type: %d", type);
+		return false;
+	}
+	if (ain->version == 14) {
+		mouse_cursor_set(type, value != 0);
+		return true;
+	}
+	mouse_cursor_config[type] = value;
+	return true;
+}
+
+// v14: AIN declares arg[1] as AIN_WRAP — pointer-based interface
+static bool SystemService_GetMouseCursorConfig(int type, int *value)
+{
+	if (type < 0 || type >= nr_mouse_cursor_config()) {
+		WARNING("Invalid mouse cursor config type: %d", type);
+		return false;
+	}
+	if (ain->version == 14) {
+		if (value) *value = mouse_cursor_get(type);
+		return true;
+	}
+	if (value) *value = !!mouse_cursor_config[type];
+	return true;
+}
+
+/*
+ * v14: MouseCursorSetting.sav in the save folder keeps the three types. The
+ * original writes it (0x498310) when its window closes (0x4be9b0) and as the
+ * first step of a restart (0x4c12e0), every time, and reads it (0x4984f0)
+ * when it makes its settings object again: here _ModuleFini and
+ * _ModuleInit, which the end of the program and a restart both run. It
+ * holds "AMC" and a 0 byte, then four little-endian int32: 2 (the version),
+ * types 0, 1 and 2, each 0 or 1. The reader starts from the defaults and
+ * stops at the first thing it cannot read, keeping what it read before: the
+ * name up to its 0 byte must be "AMC"; the version is compared unsigned and
+ * above 2 is refused; type 1 is read from version 1 on and type 2 from
+ * version 2 on (below that they keep their default 0: the original writes
+ * 0 to type 2 there, and for version 0 to a field that is already 0); each
+ * value counts as value != 0; bytes after the last one are not read. A
+ * missing file keeps the defaults; one that cannot be read, or is empty,
+ * too, with a warning (the original logs an error then). The file is
+ * written in place, as the original does.
+ */
+#define MOUSE_CURSOR_SAV "MouseCursorSetting.sav"
+#define MOUSE_CURSOR_SAV_VERSION 2
+
+static bool mouse_cursor_sav_int(const uint8_t *data, size_t len, size_t *at, int32_t *v)
+{
+	if (len - *at < 4)
+		return false;
+	const uint8_t *p = data + *at;
+	*v = (int32_t)((uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24);
+	*at += 4;
+	return true;
+}
+
+static void mouse_cursor_read_file(void)
+{
+	if (!config.save_dir)
+		return;
+	char *path = savedir_path(MOUSE_CURSOR_SAV);
+	size_t len = 0;
+	uint8_t *data = file_read(path, &len);
+	if (!data) {
+		if (file_exists(path))
+			WARNING("Failed to read '%s'", display_utf0(path));
+		free(path);
+		return;
+	}
+	free(path);
+	// the name up to its 0 byte is "AMC": the first four bytes are "AMC\0"
+	size_t at = 4;
+	int32_t version, v = 0;
+	if (len < at || memcmp(data, "AMC", at))
+		goto out;
+	if (!mouse_cursor_sav_int(data, len, &at, &v) || (uint32_t)v > MOUSE_CURSOR_SAV_VERSION)
+		goto out;
+	version = v;
+	if (!mouse_cursor_sav_int(data, len, &at, &v))
+		goto out;
+	mouse_cursor_load(MOUSE_CURSOR_HIDE_STILL, v != 0);
+	if (version >= 1) {
+		if (!mouse_cursor_sav_int(data, len, &at, &v))
+			goto out;
+		mouse_cursor_load(MOUSE_CURSOR_HIDE_KEY, v != 0);
+	}
+	if (version >= 2) {
+		if (!mouse_cursor_sav_int(data, len, &at, &v))
+			goto out;
+		mouse_cursor_load(MOUSE_CURSOR_HIDE_MESSAGE, v != 0);
+	}
+out:
+	free(data);
+}
+
+static void mouse_cursor_sav_put(uint8_t *p, int32_t v)
+{
+	for (int i = 0; i < 4; i++)
+		p[i] = (uint32_t)v >> (8 * i);
+}
+
+static void mouse_cursor_write_file(void)
+{
+	if (!config.save_dir)
+		return;
+	uint8_t data[20] = { 'A', 'M', 'C', 0 };
+	mouse_cursor_sav_put(data + 4, MOUSE_CURSOR_SAV_VERSION);
+	mouse_cursor_sav_put(data + 8, mouse_cursor_get(MOUSE_CURSOR_HIDE_STILL));
+	mouse_cursor_sav_put(data + 12, mouse_cursor_get(MOUSE_CURSOR_HIDE_KEY));
+	mouse_cursor_sav_put(data + 16, mouse_cursor_get(MOUSE_CURSOR_HIDE_MESSAGE));
+	char *path = savedir_path(MOUSE_CURSOR_SAV);
+	if (!file_write(path, data, sizeof(data)))
+		WARNING("Failed to save '%s'", display_utf0(path));
+	free(path);
+}
+
+//bool SystemService_RunProgram(struct string *program_file_name, struct string *parameter);
+//bool SystemService_IsOpenedMutex(struct string *mutex_name);
+
+// v14 declares: string GetGameFolderPath(void) — return the string directly.
+// The legacy out-param shape corrupts the libffi call frame here (0-arg cif,
+// callee writes through a garbage register; crashes with libffi 3.5).
+static struct string *SystemService_GetGameFolderPath(void)
+{
+	if (!config.game_dir)
+		return cstr_to_string(".");
+	// Return UTF-8 path directly — macOS filesystem uses UTF-8.
+	// Do NOT convert to SJIS: CJK chars in path may not exist in SJIS.
+	// GBK games get it in GB18030, which every UTF-8 path round-trips through
+	// (unix_path and TextFile decode it back).
+	if (game_charset_is_gbk()) {
+		char *gbk = utf8_to_game(config.game_dir, 0);
+		struct string *s = cstr_to_string(gbk);
+		free(gbk);
+		return s;
+	}
+	return cstr_to_string(config.game_dir);
+}
+
+static void SystemService_GetTime(int *hour_out, int *min_out, int *sec_out)
+{
+	int hour, min, sec, ms;
+	get_time(&hour, &min, &sec, &ms);
+	if (hour_out) *hour_out = hour;
+	if (min_out) *min_out = min;
+	if (sec_out) *sec_out = sec;
+}
+
+static void SystemService_GetDate(int *year_out, int *month_out, int *mday_out, int *wday_out)
+{
+	int year, month, mday, wday;
+	get_date(&year, &month, &mday, &wday);
+	if (year_out) *year_out = year;
+	if (month_out) *month_out = month;
+	if (mday_out) *mday_out = mday;
+	if (wday_out) *wday_out = wday;
+}
+
+static bool SystemService_IsResetOnce(void)
+{
+	return vm_reset_once;
+}
+
+static bool SystemService_IsResetOnce_Drapeko(struct string **text)
+{
+	*text = cstr_to_string("XXX TTT YYY"); // ???
+	return vm_reset_once;
+}
+
+static char *get_manual_filename(void) {
+	char *manual_path = path_join("Manual", "index.html");
+	char *file_path = path_join(config.game_dir, manual_path);
+	free(manual_path);
+	return file_path;
+}
+
+static bool SystemService_IsExistPlayingManual(void) {
+	char *filename = get_manual_filename();
+	const bool exists = file_exists(filename);
+	free(filename);
+	return exists;
+}
+
+#ifndef _WIN32
+static char *percent_encode(const char *str) {
+	const char *hex = "0123456789ABCDEF";
+	// Worst case all characters are percent-encoded
+	char *encoded = xmalloc(strlen(str) * 3 + 1);
+
+	char *p = encoded;
+	while (*str) {
+		const unsigned char c = *str++;
+		if ((c >= 'a' && c <= 'z') ||
+			(c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9') ||
+			c == '-' || c == '_' || c == '.' || c == '~' || c == '/') {
+			*p++ = (char)c;
+		} else {
+			*p++ = '%';
+			*p++ = hex[c >> 4];
+			*p++ = hex[c & 15];
+		}
+	}
+
+	*p = '\0';
+	return encoded;
+}
+#endif
+
+static void SystemService_OpenPlayingManual(void) {
+	if (!SystemService_IsExistPlayingManual()) {
+		return;
+	}
+#ifdef __ANDROID__
+	const int COMMAND_OPEN_PLAYING_MANUAL = 0x8000;
+	SDL_AndroidSendMessage(COMMAND_OPEN_PLAYING_MANUAL, 0);
+#else
+	char *filename = get_manual_filename();
+
+	char *real_path = realpath_utf8(filename);
+	free(filename);
+	if (!real_path) {
+		return;
+	}
+
+#ifdef _WIN32
+	const char *prefix = "file:///";
+	char *path_component = real_path;
+#else
+	const char *prefix = "file://";
+	char *path_component = percent_encode(real_path);
+	free(real_path);
+#endif
+	char *url = xmalloc(strlen(prefix) + strlen(path_component) + 1);
+	strcpy(url, prefix);
+	strcat(url, path_component);
+
+	if (SDL_OpenURL(url) < 0) {
+		WARNING("Failed to open manual at '%s': %s", url, SDL_GetError());
+	}
+
+	free(url);
+	free(path_component);
+#endif
+}
+
+//static bool SystemService_IsExistSystemMessage(void);
+HLL_QUIET_UNIMPLEMENTED(false, bool, SystemService, IsExistSystemMessage);
+//static bool SystemService_PopSystemMessage(int *message);
+
+/*
+ * v14: RestrainScreensaver (0x4b9f00) records the time, and for 30 s after
+ * the last call the original's window refuses SC_SCREENSAVE and
+ * SC_MONITORPOWER (0x4bdea0 -> 0x4b9f70); otherwise the screen saver is
+ * allowed. The game calls it when its setting is on: each frame while a
+ * movie plays, and each time auto mode moves on from a message. SDL turns
+ * the screen saver off when its video starts; each UpdateView sets it to
+ * what the original would allow at that time (SDL does something only when
+ * that changes; on macOS it holds a display sleep assertion while the
+ * screen saver is off, which keeps off the display sleep as well, as the
+ * original's two refusals do). Other versions keep SDL's default, and
+ * the call does nothing for them.
+ */
+#define SCREENSAVER_RESTRAIN_MS 30000
+static bool screensaver_restrained;		// +4
+static uint32_t screensaver_restrain_time;	// +8
+
+static void SystemService_RestrainScreensaver(void)
+{
+	if (ain->version != 14)
+		return;
+	screensaver_restrained = true;
+	screensaver_restrain_time = SDL_GetTicks();
+}
+
+static void screensaver_update(void)
+{
+	if (ain->version != 14)
+		return;
+	if (screensaver_restrained && SDL_GetTicks() - screensaver_restrain_time < SCREENSAVER_RESTRAIN_MS)
+		SDL_DisableScreenSaver();
+	else
+		SDL_EnableScreenSaver();
+}
+
+static int SystemService_Debug_GetUseVideoMemorySize(void) { return 0; }
+
+static float SystemService_GetGameViewScaleRate(void) { return 1.0f; }
+static int SystemService_Debug_GetUseMemorySize(void) { return 0; }
+
+// Rance 01
+static void SystemService_Rance0123456789(struct string **text)
+{
+	*text = cstr_to_string("-RANCE010ECNAR-");
+}
+
+// Rance 01 trial edition
+static void SystemService_XXXXX01XXXXXXXX(struct string **text)
+{
+	*text = cstr_to_string("RANCE01RANCEKAKKOII");
+}
+
+// Drapeko
+static void SystemService_Test(struct string **text)
+{
+	*text = cstr_to_string("DELETE ALL 758490275489207548093");
+}
+
+// Drapeko trial edition
+static void SystemService_DRPKT(struct string **text)
+{
+	*text = cstr_to_string("DRPKT QWERTY NUFUAUEO 75849027582754829");
+}
+
+static struct string *SystemService_GetGameVersionByText(void)
+{
+	// JAST English edition version string (extracted from dohnadohna.exe).
+	// Game reads chars at index 2 and 24 to determine edition/language.
+	return cstr_to_string("sd4gv86sdf834fs68f63qvna4");
+}
+
+// Rance 9
+static void SystemService_Rance96161988(struct string **text) {
+	*text = cstr_to_string("=Rance99/RANCE99=");
+}
+
+// Pascha3 Plus Contents
+static void SystemService_XXX(struct string **text) {
+	*text = cstr_to_string("FORMAT HDD ERASE 578205024758284076520478254092784789752384758204687293");
+}
+
+static void SystemService_PreLink(void);
+
+static void SystemService_ModuleInit(void)
+{
+	load_window_settings();
+	// As the original makes its cursor settings object and then reads the
+	// file (0x4bfd60), at the start of the program and on a restart.
+	// The restart loop (0x4b5a60) releases the old references (0x4c12e0
+	// and 0x4b30f0) before it initializes the input engine again.
+	if (ain->version == 14) {
+		mouse_cursor_init();
+		mouse_cursor_read_file();
+	}
+}
+
+static void SystemService_ModuleFini(void)
+{
+	if (ain->version == 14) {
+		mouse_cursor_write_file();
+		mouse_cursor_fini();
+	}
+}
+
+static void SystemService_AddBackupSaveFileName(struct string *name)
+{
+	// stub — backup save file name tracking not needed
+}
+
+static void SystemService_ShowWaitMessage(bool show)
+{
+	// stub — wait message overlay not implemented
+}
+
+/* GameVariable: simple key-value string store (persisted per session) */
+#define GAMEVAR_MAX 128
+static struct { char *key; char *value; } game_vars[GAMEVAR_MAX];
+static int game_var_count = 0;
+
+static int gamevar_find(const char *key)
+{
+	for (int i = 0; i < game_var_count; i++) {
+		if (game_vars[i].key && !strcmp(game_vars[i].key, key))
+			return i;
+	}
+	return -1;
+}
+
+static bool SystemService_GameVariable_IsExist(struct string *key)
+{
+	return gamevar_find(key->text) >= 0;
+}
+
+static void SystemService_GameVariable_Set(struct string *key, struct string *value)
+{
+	int idx = gamevar_find(key->text);
+	if (idx >= 0) {
+		free(game_vars[idx].value);
+		game_vars[idx].value = strdup(value->text);
+		return;
+	}
+	if (game_var_count >= GAMEVAR_MAX) return;
+	game_vars[game_var_count].key = strdup(key->text);
+	game_vars[game_var_count].value = strdup(value->text);
+	game_var_count++;
+}
+
+static struct string *SystemService_GameVariable_Get(struct string *key)
+{
+	int idx = gamevar_find(key->text);
+	if (idx >= 0)
+		return cstr_to_string(game_vars[idx].value);
+	return string_ref(&EMPTY_STRING);
+}
+
+static int SystemService_GameVariable_NumofKey(void)
+{
+	return game_var_count;
+}
+
+static struct string *SystemService_GameVariable_GetKey(int index)
+{
+	if (index >= 0 && index < game_var_count && game_vars[index].key)
+		return cstr_to_string(game_vars[index].key);
+	return string_ref(&EMPTY_STRING);
+}
+
+static void SystemService_GameVariable_Erase(struct string *key)
+{
+	int idx = gamevar_find(key->text);
+	if (idx < 0) return;
+	free(game_vars[idx].key);
+	free(game_vars[idx].value);
+	if (idx < game_var_count - 1)
+		game_vars[idx] = game_vars[game_var_count - 1];
+	game_var_count--;
+}
+
+// v14 save/load stubs — pretend to succeed so game logic continues
+static bool SystemService_Save(struct string *filename)
+{
+	return true;
+}
+
+static bool SystemService_Load(struct string *filename)
+{
+	return true;
+}
+
+HLL_QUIET_UNIMPLEMENTED( , void, SystemService, SetAntiAliasingMode, int mode);
+HLL_QUIET_UNIMPLEMENTED( , void, SystemService, SetHookCloseApp, bool hook);
+HLL_QUIET_UNIMPLEMENTED( , void, SystemService, SetAndroidViewKeepScreen, bool keep);
+
+static bool SystemService_GetHideMouseCursorByGame(void) { return false; }
+static bool SystemService_GetUsePower2Texture(void) { return false; }
+static bool SystemService_RunProgram(struct string *prog) { return false; }
+static bool SystemService_IsOpenedMutex(struct string *name) { return false; }
+static bool SystemService_PopSystemMessage(void) { return false; }
+static int SystemService_GetDefaultViewWidth(void) { return config.view_width; }
+static int SystemService_GetDefaultViewHeight(void) { return config.view_height; }
+static int SystemService_GetWindowPosX(void) { return 0; }
+static int SystemService_GetWindowPosY(void) { return 0; }
+static void SystemService_SetWindowPos(int x, int y) { }
+static void SystemService_SetViewSize(int w, int h) { }
+static void SystemService_SetGameViewScaleRate2(float rate) { }
+static int SystemService_GetPlatformType(void) { return 0; /* 0=Windows */ }
+// v14 declares: string GetCountryNo(void) — the game stores it into a PCInfo
+// string field. Returning int here put a garbage pointer on the VM stack.
+static struct string *SystemService_GetCountryNo(void) { return cstr_to_string("1"); /* 1=Japan */ }
+static int SystemService_GetAntiAliasingMode(void) { return 0; }
+static bool SystemService_IsViewResizableMode(void) { return false; }
+static void SystemService_SetViewResizableMode(int mode) { }
+static bool SystemService_IsResizableUserControl(void) { return false; }
+static void SystemService_SetResizableUserControl(int ctrl) { }
+static bool SystemService_IsHookCloseApp(void) { return false; }
+static void SystemService_BackupSaveFile(void) { }
+static bool SystemService_EnableSystemPopup(void) { return true; }
+static void SystemService_PopSystemMessageString(struct string *msg) { }
+static void SystemService_RenderToSurfaceImage(int surface) { }
+static void SystemService_RenderToSurfaceImageByScale(int surface, float scale) { }
+static bool SystemService_SaveScreenshot(struct string *path, int x, int y, int w, int h) { return false; }
+
+/* SystemVariable — per-session key-value store (not persisted) */
+struct sys_var { char *key; char *val; };
+static struct sys_var *sys_vars = NULL;
+static int nr_sys_vars = 0;
+
+static bool SystemService_SystemVariable_IsExist(struct string *key)
+{
+	for (int i = 0; i < nr_sys_vars; i++)
+		if (!strcmp(sys_vars[i].key, key->text)) return true;
+	return false;
+}
+
+static void SystemService_SystemVariable_Set(struct string *key, struct string *val)
+{
+	for (int i = 0; i < nr_sys_vars; i++) {
+		if (!strcmp(sys_vars[i].key, key->text)) {
+			free(sys_vars[i].val);
+			sys_vars[i].val = strdup(val->text);
+			return;
+		}
+	}
+	sys_vars = xrealloc_array(sys_vars, nr_sys_vars, nr_sys_vars + 1, sizeof(struct sys_var));
+	sys_vars[nr_sys_vars].key = strdup(key->text);
+	sys_vars[nr_sys_vars].val = strdup(val->text);
+	nr_sys_vars++;
+}
+
+static struct string *SystemService_SystemVariable_Get(struct string *key)
+{
+	for (int i = 0; i < nr_sys_vars; i++)
+		if (!strcmp(sys_vars[i].key, key->text))
+			return cstr_to_string(sys_vars[i].val);
+	return string_ref(&EMPTY_STRING);
+}
+
+static int SystemService_SystemVariable_NumofKey(void) { return nr_sys_vars; }
+
+static struct string *SystemService_SystemVariable_GetKey(int index)
+{
+	if (index < 0 || index >= nr_sys_vars)
+		return string_ref(&EMPTY_STRING);
+	return cstr_to_string(sys_vars[index].key);
+}
+
+static void SystemService_SystemVariable_Erase(struct string *key)
+{
+	for (int i = 0; i < nr_sys_vars; i++) {
+		if (!strcmp(sys_vars[i].key, key->text)) {
+			free(sys_vars[i].key);
+			free(sys_vars[i].val);
+			for (int j = i + 1; j < nr_sys_vars; j++)
+				sys_vars[j-1] = sys_vars[j];
+			nr_sys_vars--;
+			return;
+		}
+	}
+}
+
+/* Debug functions */
+static bool SystemService_Debug_IsShowMipmapLevel(void) { return false; }
+static void SystemService_Debug_SetShowMipmapLevel(int level) { }
+
+/* Stubs for functions not applicable to desktop */
+static void SystemService_SetAndroidViewOrientation(int orient) { }
+
+/* CPU/Memory/OS info stubs */
+static bool SystemService_GetCPUInfo(int *vendor, int *family, int *model, int *stepping) {
+	if (vendor) *vendor = 0;
+	if (family) *family = 0;
+	if (model) *model = 0;
+	if (stepping) *stepping = 0;
+	return true;
+}
+static bool SystemService_GetMemoryInfo(int *total_mb, int *avail_mb) {
+	if (total_mb) *total_mb = 8192;
+	if (avail_mb) *avail_mb = 4096;
+	return true;
+}
+static struct string *SystemService_GetOSInfo(void) { return cstr_to_string("macOS"); }
+static struct string *SystemService_GetScreenInfo(void) {
+	char buf[64];
+	snprintf(buf, sizeof(buf), "%dx%d", config.view_width, config.view_height);
+	return cstr_to_string(buf);
+}
+
+HLL_LIBRARY(SystemService,
+	    HLL_EXPORT(_PreLink, SystemService_PreLink),
+	    HLL_EXPORT(_ModuleInit, SystemService_ModuleInit),
+	    HLL_EXPORT(_ModuleFini, SystemService_ModuleFini),
+	    HLL_EXPORT(GetMixerNumof, mixer_get_numof),
+	    HLL_EXPORT(GetMixerName, SystemService_GetMixerName),
+	    HLL_EXPORT(GetMixerVolume, mixer_get_volume),
+	    HLL_EXPORT(GetMixerDefaultVolume, SystemService_GetMixerDefaultVolume),
+	    HLL_EXPORT(GetMixerMute, mixer_get_mute),
+	    HLL_EXPORT(SetMixerName, SystemService_SetMixerName),
+	    HLL_EXPORT(SetMixerVolume, mixer_set_volume),
+	    HLL_EXPORT(SetMixerMute, mixer_set_mute),
+	    HLL_EXPORT(GetGameVersion, SystemService_GetGameVersion),
+	    HLL_EXPORT(GetGameName, SystemService_GetGameName),
+	    HLL_EXPORT(AddURLMenu, SystemService_AddURLMenu),
+	    HLL_EXPORT(IsFullScreen, SystemService_IsFullScreen),
+	    HLL_EXPORT(ChangeNormalScreen, SystemService_ChangeNormalScreen),
+	    HLL_EXPORT(ChangeFullScreen, SystemService_ChangeFullScreen),
+	    HLL_EXPORT(InitMainWindowPosAndSize, SystemService_InitMainWindowPosAndSize),
+	    HLL_EXPORT(UpdateView, SystemService_UpdateView),
+	    HLL_EXPORT(GetViewWidth, SystemService_GetViewWidth),
+	    HLL_EXPORT(GetViewHeight, SystemService_GetViewHeight),
+	    HLL_EXPORT(MoveMouseCursorPosImmediately, SystemService_MoveMouseCursorPosImmediately),
+	    HLL_EXPORT(SetHideMouseCursorByGame, SystemService_SetHideMouseCursorByGame),
+	    HLL_EXPORT(GetHideMouseCursorByGame, SystemService_GetHideMouseCursorByGame),
+	    HLL_EXPORT(SetUsePower2Texture, SystemService_SetUsePower2Texture),
+	    HLL_EXPORT(GetUsePower2Texture, SystemService_GetUsePower2Texture),
+	    HLL_EXPORT(SetWindowSetting, SystemService_SetWindowSetting),
+	    HLL_EXPORT(GetWindowSetting, SystemService_GetWindowSetting),
+	    HLL_EXPORT(SetMouseCursorConfig, SystemService_SetMouseCursorConfig),
+	    HLL_EXPORT(GetMouseCursorConfig, SystemService_GetMouseCursorConfig),
+	    HLL_EXPORT(RunProgram, SystemService_RunProgram),
+	    HLL_EXPORT(IsOpenedMutex, SystemService_IsOpenedMutex),
+	    HLL_EXPORT(GetGameFolderPath, SystemService_GetGameFolderPath),
+	    HLL_EXPORT(GetDate, SystemService_GetDate),
+	    HLL_EXPORT(GetTime, SystemService_GetTime),
+	    HLL_EXPORT(IsResetOnce, SystemService_IsResetOnce),
+	    HLL_EXPORT(OpenPlayingManual, SystemService_OpenPlayingManual),
+	    HLL_EXPORT(IsExistPlayingManual, SystemService_IsExistPlayingManual),
+	    HLL_EXPORT(IsExistSystemMessage, SystemService_IsExistSystemMessage),
+	    HLL_EXPORT(PopSystemMessage, SystemService_PopSystemMessage),
+	    HLL_EXPORT(RestrainScreensaver, SystemService_RestrainScreensaver),
+	    HLL_EXPORT(GetGameViewScaleRate, SystemService_GetGameViewScaleRate),
+	    HLL_EXPORT(Debug_GetUseMemorySize, SystemService_Debug_GetUseMemorySize),
+	    HLL_EXPORT(Debug_GetUseVideoMemorySize, SystemService_Debug_GetUseVideoMemorySize),
+	    HLL_EXPORT(Rance0123456789, SystemService_Rance0123456789),
+	    HLL_EXPORT(XXXXX01XXXXXXXX, SystemService_XXXXX01XXXXXXXX),
+	    HLL_EXPORT(XXX, SystemService_XXX),
+	    HLL_EXPORT(Test, SystemService_Test),
+	    HLL_EXPORT(DRPKT, SystemService_DRPKT),
+	    HLL_EXPORT(GetGameVersionByText, SystemService_GetGameVersionByText),
+	    HLL_EXPORT(Rance96161988, SystemService_Rance96161988),
+	    HLL_EXPORT(AddBackupSaveFileName, SystemService_AddBackupSaveFileName),
+	    HLL_EXPORT(ShowWaitMessage, SystemService_ShowWaitMessage),
+	    HLL_EXPORT(GameVariable_IsExist, SystemService_GameVariable_IsExist),
+	    HLL_EXPORT(GameVariable_Set, SystemService_GameVariable_Set),
+	    HLL_EXPORT(GameVariable_Get, SystemService_GameVariable_Get),
+	    HLL_EXPORT(GameVariable_NumofKey, SystemService_GameVariable_NumofKey),
+	    HLL_EXPORT(GameVariable_GetKey, SystemService_GameVariable_GetKey),
+	    HLL_EXPORT(GameVariable_Erase, SystemService_GameVariable_Erase),
+	    HLL_EXPORT(Save, SystemService_Save),
+	    HLL_EXPORT(Load, SystemService_Load),
+	    HLL_EXPORT(SetAntiAliasingMode, SystemService_SetAntiAliasingMode),
+	    HLL_EXPORT(SetHookCloseApp, SystemService_SetHookCloseApp),
+	    HLL_EXPORT(SetAndroidViewKeepScreen, SystemService_SetAndroidViewKeepScreen),
+	    HLL_EXPORT(GetDefaultViewWidth, SystemService_GetDefaultViewWidth),
+	    HLL_EXPORT(GetDefaultViewHeight, SystemService_GetDefaultViewHeight),
+	    HLL_EXPORT(GetWindowPosX, SystemService_GetWindowPosX),
+	    HLL_EXPORT(GetWindowPosY, SystemService_GetWindowPosY),
+	    HLL_EXPORT(SetWindowPos, SystemService_SetWindowPos),
+	    HLL_EXPORT(SetViewSize, SystemService_SetViewSize),
+	    HLL_EXPORT(SetGameViewScaleRate, SystemService_SetGameViewScaleRate2),
+	    HLL_EXPORT(GetPlatformType, SystemService_GetPlatformType),
+	    HLL_EXPORT(GetCountryNo, SystemService_GetCountryNo),
+	    HLL_EXPORT(GetAntiAliasingMode, SystemService_GetAntiAliasingMode),
+	    HLL_EXPORT(IsViewResizableMode, SystemService_IsViewResizableMode),
+	    HLL_EXPORT(SetViewResizableMode, SystemService_SetViewResizableMode),
+	    HLL_EXPORT(IsResizableUserControl, SystemService_IsResizableUserControl),
+	    HLL_EXPORT(SetResizableUserControl, SystemService_SetResizableUserControl),
+	    HLL_EXPORT(IsHookCloseApp, SystemService_IsHookCloseApp),
+	    HLL_EXPORT(BackupSaveFile, SystemService_BackupSaveFile),
+	    HLL_EXPORT(EnableSystemPopup, SystemService_EnableSystemPopup),
+	    HLL_EXPORT(PopSystemMessageString, SystemService_PopSystemMessageString),
+	    HLL_EXPORT(RenderToSurfaceImage, SystemService_RenderToSurfaceImage),
+	    HLL_EXPORT(RenderToSurfaceImageByScale, SystemService_RenderToSurfaceImageByScale),
+	    HLL_EXPORT(SaveScreenshot, SystemService_SaveScreenshot),
+	    HLL_EXPORT(SetAndroidViewOrientation, SystemService_SetAndroidViewOrientation),
+	    HLL_EXPORT(SystemVariable_IsExist, SystemService_SystemVariable_IsExist),
+	    HLL_EXPORT(SystemVariable_Set, SystemService_SystemVariable_Set),
+	    HLL_EXPORT(SystemVariable_Get, SystemService_SystemVariable_Get),
+	    HLL_EXPORT(SystemVariable_NumofKey, SystemService_SystemVariable_NumofKey),
+	    HLL_EXPORT(SystemVariable_GetKey, SystemService_SystemVariable_GetKey),
+	    HLL_EXPORT(SystemVariable_Erase, SystemService_SystemVariable_Erase),
+	    HLL_EXPORT(Debug_IsShowMipmapLevel, SystemService_Debug_IsShowMipmapLevel),
+	    HLL_EXPORT(Debug_SetShowMipmapLevel, SystemService_Debug_SetShowMipmapLevel),
+	    HLL_EXPORT(GetCPUInfo, SystemService_GetCPUInfo),
+	    HLL_EXPORT(GetMemoryInfo, SystemService_GetMemoryInfo),
+	    HLL_EXPORT(GetOSInfo, SystemService_GetOSInfo),
+	    HLL_EXPORT(GetScreenInfo, SystemService_GetScreenInfo)
+	);
+
+static struct ain_hll_function *get_fun(int libno, const char *name)
+{
+	int fno = ain_get_library_function(ain, libno, name);
+	return fno >= 0 ? &ain->libraries[libno].functions[fno] : NULL;
+}
+
+static void SystemService_PreLink(void)
+{
+	struct ain_hll_function *fun;
+	int libno = ain_get_library(ain, "SystemService");
+	assert(libno >= 0);
+
+	fun = get_fun(libno, "IsResetOnce");
+	if (fun && fun->nr_arguments == 1) {
+		static_library_replace(&lib_SystemService, "IsResetOnce",
+				SystemService_IsResetOnce_Drapeko);
+	}
+}
