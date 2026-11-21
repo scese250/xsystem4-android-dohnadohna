@@ -1,13 +1,11 @@
 package io.github.kichikuou.xsystem4
 
 import android.Manifest
-import android.animation.ObjectAnimator
-import android.animation.PropertyValuesHolder
-import android.animation.ValueAnimator
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.Intent
+import android.graphics.Outline
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -20,8 +18,8 @@ import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
+import android.view.ViewOutlineProvider
 import android.view.WindowManager
-import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.PathInterpolator
 import android.widget.Button
 import android.widget.EditText
@@ -32,7 +30,6 @@ import java.io.File
 
 private const val STORAGE_PERMISSION_REQUEST = 2
 private const val OPEN_DOCUMENT_TREE_REQUEST = 3
-private const val STATE_AUTO_PROMPTED_PERMISSION = "auto_prompted_permission"
 
 class LauncherActivity : Activity() {
     companion object {
@@ -45,12 +42,10 @@ class LauncherActivity : Activity() {
     private lateinit var screenGameReady: View
     private lateinit var btnGrantPermission: Button
     private lateinit var btnLocateGame: Button
-    private lateinit var btnStartGame: Button
+    private lateinit var btnStartGame: CyberStartButton
     private lateinit var gameIcon: ImageView
 
     private var currentScreen: View? = null
-    private var startButtonAnimator: ObjectAnimator? = null
-    private var hasAutoPromptedPermission = false
     private var storageAccessGranted = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -66,6 +61,14 @@ class LauncherActivity : Activity() {
         btnStartGame = findViewById(R.id.btn_start_game)
         gameIcon = findViewById(R.id.game_icon)
 
+        val iconRadius = 18f * resources.displayMetrics.density
+        gameIcon.outlineProvider = object : ViewOutlineProvider() {
+            override fun getOutline(view: View, outline: Outline) {
+                outline.setRoundRect(0, 0, view.width, view.height, iconRadius)
+            }
+        }
+        gameIcon.clipToOutline = true
+
         btnGrantPermission.setOnClickListener {
             requestAllFilesAccess()
         }
@@ -78,7 +81,6 @@ class LauncherActivity : Activity() {
             true
         }
 
-        hasAutoPromptedPermission = savedInstanceState?.getBoolean(STATE_AUTO_PROMPTED_PERMISSION) ?: false
         storageAccessGranted = hasAllFilesPermission()
 
         if (storageAccessGranted) {
@@ -86,10 +88,6 @@ class LauncherActivity : Activity() {
         } else {
             savedGameList = null
             applyGameList(GameList(this, allowStorageAccess = false))
-            if (!hasAutoPromptedPermission) {
-                hasAutoPromptedPermission = true
-                requestAllFilesAccess()
-            }
         }
     }
 
@@ -116,18 +114,12 @@ class LauncherActivity : Activity() {
                 applyGameList(GameList(this, allowStorageAccess = false))
             }
             updateEmptyState()
-            // Only auto-open the permission screen once; otherwise returning without granting
-            // would bounce the user back to Settings forever.
-            if (!hasAutoPromptedPermission) {
-                hasAutoPromptedPermission = true
-                requestAllFilesAccess()
-            }
         }
     }
 
     override fun onPause() {
         // Do not keep the pulsing Start Game button animating while the game is in front.
-        stopStartButtonAnimation()
+        btnStartGame.stopPulseAnimation()
         super.onPause()
     }
 
@@ -139,13 +131,8 @@ class LauncherActivity : Activity() {
     }
 
     override fun onDestroy() {
-        stopStartButtonAnimation()
+        btnStartGame.stopPulseAnimation()
         super.onDestroy()
-    }
-
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-        outState.putBoolean(STATE_AUTO_PROMPTED_PERMISSION, hasAutoPromptedPermission)
     }
 
     // Html.fromHtml(String) is deprecated since API 24. The newer overload needs API 24, but the
@@ -255,11 +242,11 @@ class LauncherActivity : Activity() {
     private fun updateEmptyState() {
         when {
             !storageAccessGranted -> {
-                stopStartButtonAnimation()
+                btnStartGame.stopPulseAnimation()
                 showScreenAnimated(screenPermission)
             }
             gameList.size == 0 -> {
-                stopStartButtonAnimation()
+                btnStartGame.stopPulseAnimation()
                 showScreenAnimated(screenLocate)
             }
             else -> {
@@ -271,27 +258,17 @@ class LauncherActivity : Activity() {
                 btnStartGame.setOnClickListener {
                     onListItemClick(item)
                 }
-                updateGameIcon(item)
+                updateGameIcon()
                 showScreenAnimated(screenGameReady)
-                startStartButtonAnimation(btnStartGame)
+                btnStartGame.startPulseAnimation()
             }
         }
     }
 
-    private fun updateGameIcon(item: Item) {
-        val sizePx = (72 * resources.displayMetrics.density).toInt()
-        val bitmap = try {
-            item.getIconBitmap(sizePx)
-        } catch (e: Exception) {
-            Log.w("LauncherActivity", "Failed to load the game icon", e)
-            null
-        }
-        if (bitmap != null) {
-            gameIcon.setImageBitmap(bitmap)
-        } else {
-            // Keep the Dohna Dohna icon when the game has no .ico/exe icon.
-            gameIcon.setImageResource(R.drawable.dohna_icon)
-        }
+    private fun updateGameIcon() {
+        // Always use the crisp 256x256 Dohna Dohna icon so a smaller .ico entry (e.g. 48x48)
+        // never gets upscaled and blurred on high-DPI screens.
+        gameIcon.setImageResource(R.drawable.dohna_icon)
     }
 
     private fun showScreenAnimated(target: View) {
@@ -329,32 +306,6 @@ class LauncherActivity : Activity() {
                 }
                 .start()
         }
-    }
-
-    private fun startStartButtonAnimation(btn: Button) {
-        if (startButtonAnimator != null) {
-            return
-        }
-        val animator = ObjectAnimator.ofPropertyValuesHolder(
-            btn,
-            PropertyValuesHolder.ofFloat(View.SCALE_X, 1.0f, 1.025f),
-            PropertyValuesHolder.ofFloat(View.SCALE_Y, 1.0f, 1.025f),
-            PropertyValuesHolder.ofFloat(View.ALPHA, 1.0f, 0.92f)
-        )
-        animator.duration = 2000L
-        animator.repeatCount = ValueAnimator.INFINITE
-        animator.repeatMode = ValueAnimator.REVERSE
-        animator.interpolator = AccelerateDecelerateInterpolator()
-        animator.start()
-        startButtonAnimator = animator
-    }
-
-    private fun stopStartButtonAnimation() {
-        startButtonAnimator?.cancel()
-        startButtonAnimator = null
-        btnStartGame.scaleX = 1f
-        btnStartGame.scaleY = 1f
-        btnStartGame.alpha = 1f
     }
 
     private fun showPermissionRequired() {
@@ -401,7 +352,6 @@ class LauncherActivity : Activity() {
     }
 
     private fun requestAllFilesAccess() {
-        hasAutoPromptedPermission = true
         if (hasAllFilesPermission()) {
             Toast.makeText(this, R.string.storage_access_already_granted, Toast.LENGTH_SHORT).show()
             if (!storageAccessGranted) {

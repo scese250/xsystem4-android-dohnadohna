@@ -4,22 +4,17 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.text.Layout
 import android.util.AttributeSet
 import android.util.TypedValue
 import android.widget.TextView
 
 /**
- * TextView that reproduces the "Dohna Dohna Android Ver." logo lettering:
- * hot pink fill, neon lime inner outline, thick black outer outline and a
- * hard black 3D drop shadow. The magenta glow comes from the regular
- * TextView shadow layer configured in the layout.
+ * TextView that reproduces the "DOHNA DOHNA ANDROID VER." header from the mockup:
+ * bright pink fill (#FF2DB8), crisp thick black outer outline, black 3D drop shadow,
+ * soft magenta outer glow, and a horizontal -3deg skew (keeping the baseline level).
  *
- * Paint order (bottom to top):
- *   1. black 3D drop shadow, offset by +5dp / +5dp
- *   2. black outer outline (3dp on each side)
- *   3. neon lime inner outline (2dp on each side)
- *   4. the normal TextView drawing (pink fill + glow)
+ * Every layer is rendered via `layout.draw(canvas)` using the TextView's own TextPaint
+ * so `textAllCaps`, `letterSpacing`, and `gravity` align identically across stroke and fill.
  */
 class StrokedTextView @JvmOverloads constructor(
     context: Context,
@@ -27,13 +22,11 @@ class StrokedTextView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : TextView(context, attrs, defStyleAttr) {
 
-    private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val density = resources.displayMetrics.density
 
     init {
-        // Keep room inside the view bounds for the strokes, the 3D shadow and the
-        // glow so that neither the outline nor the -3 degree rotation gets clipped.
-        val horizontal = (10f * density + 0.5f).toInt()
+        // Reserve internal room for the 3dp stroke, 3.5dp 3D shadow, magenta glow, and -3deg skew.
+        val horizontal = (14f * density + 0.5f).toInt()
         val vertical = (10f * density + 0.5f).toInt()
         setPadding(
             paddingLeft + horizontal,
@@ -44,9 +37,9 @@ class StrokedTextView @JvmOverloads constructor(
     }
 
     /**
-     * The mockup renders the title on a single line. On narrow landscape phones the
-     * default 22sp is wider than the center column, so shrink the text size just enough
-     * to keep it on one line (down to 15sp) instead of letting it wrap mid-phrase.
+     * The mockup renders the title on a single horizontal line. On narrow landscape phones the
+     * default 22sp can exceed the center column width, so shrink text size until it fits on
+     * one line (down to 14sp) instead of wrapping mid-phrase.
      */
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         super.onMeasure(widthMeasureSpec, heightMeasureSpec)
@@ -61,14 +54,13 @@ class StrokedTextView @JvmOverloads constructor(
 
         val minSize = TypedValue.applyDimension(
             TypedValue.COMPLEX_UNIT_SP,
-            15f,
+            14f,
             resources.displayMetrics
         )
         var size = textSize
         while (size > minSize) {
             size = (size - density).coerceAtLeast(minSize)
             setTextSize(TypedValue.COMPLEX_UNIT_PX, size)
-            // Re-measure so the next check uses the real, letter-spaced line layout.
             super.onMeasure(widthMeasureSpec, heightMeasureSpec)
             val fitted = layout
             if (fitted == null || fitted.lineCount <= 1) {
@@ -84,54 +76,76 @@ class StrokedTextView @JvmOverloads constructor(
             return
         }
 
-        // Copy the TextView's own TextPaint. This preserves the typeface, text size
-        // and the native letter spacing state, so the strokes line up exactly with
-        // the filled glyphs that super.onDraw() renders.
-        strokePaint.set(paint)
-        strokePaint.clearShadowLayer()
-        strokePaint.isAntiAlias = true
-        strokePaint.strokeCap = Paint.Cap.ROUND
-        strokePaint.strokeJoin = Paint.Join.ROUND
+        val textPaint = paint
+        val origStyle = textPaint.style
+        val origStrokeWidth = textPaint.strokeWidth
+        val origStrokeCap = textPaint.strokeCap
+        val origStrokeJoin = textPaint.strokeJoin
+        val origColor = textPaint.color
+        val fillColor = currentTextColor
 
-        val offset = 5f * density
+        val verticalExtra = (height - extendedPaddingTop - extendedPaddingBottom - textLayout.height)
+            .coerceAtLeast(0) / 2f
+        val xOffset = compoundPaddingLeft.toFloat()
+        val yOffset = extendedPaddingTop.toFloat() + verticalExtra
+        val cx = width / 2f
+        val cy = height / 2f
 
-        // Layer 1: 3D drop shadow. FILL_AND_STROKE makes the shadow follow the
-        // outer outline instead of the thin glyph shape.
-        strokePaint.style = Paint.Style.FILL_AND_STROKE
-        strokePaint.strokeWidth = 6f * density
-        strokePaint.color = Color.BLACK
-        drawTextLines(canvas, textLayout, offset, offset)
+        canvas.save()
+        try {
+            // CSS transform: skew(-3deg) keeps the baseline 100% horizontal.
+            canvas.translate(cx, cy)
+            canvas.skew(SKEW_X, 0f)
+            canvas.translate(-cx, -cy)
+            canvas.translate(xOffset, yOffset)
 
-        // Layer 2: black outer outline (3dp each side).
-        strokePaint.style = Paint.Style.STROKE
-        strokePaint.strokeWidth = 6f * density
-        strokePaint.color = Color.BLACK
-        drawTextLines(canvas, textLayout, 0f, 0f)
+            textPaint.isAntiAlias = true
+            textPaint.strokeCap = Paint.Cap.ROUND
+            textPaint.strokeJoin = Paint.Join.ROUND
 
-        // Layer 3: neon lime inner outline (2dp each side).
-        strokePaint.strokeWidth = 4f * density
-        strokePaint.color = LIME
-        drawTextLines(canvas, textLayout, 0f, 0f)
+            // Layer 1: Soft magenta outer glow
+            textPaint.style = Paint.Style.FILL_AND_STROKE
+            textPaint.strokeWidth = 6f * density
+            textPaint.color = COLOR_MAGENTA_GLOW
+            textPaint.setShadowLayer(16f * density, 0f, 0f, COLOR_MAGENTA_GLOW)
+            textLayout.draw(canvas)
 
-        // Layer 4: pink fill and magenta glow.
-        super.onDraw(canvas)
-    }
+            // Layer 2: Hard black 3D drop shadow (+3.5dp, +3.5dp)
+            textPaint.clearShadowLayer()
+            textPaint.style = Paint.Style.FILL_AND_STROKE
+            textPaint.strokeWidth = 6f * density
+            textPaint.color = Color.BLACK
+            canvas.save()
+            canvas.translate(3.5f * density, 3.5f * density)
+            textLayout.draw(canvas)
+            canvas.restore()
 
-    private fun drawTextLines(canvas: Canvas, textLayout: Layout, dx: Float, dy: Float) {
-        val content = text
-        val xOffset = compoundPaddingLeft + dx
-        val yOffset = extendedPaddingTop + dy
-        for (i in 0 until textLayout.lineCount) {
-            val start = textLayout.getLineStart(i)
-            val end = textLayout.getLineEnd(i)
-            if (end <= start) continue
-            val x = textLayout.getLineLeft(i) + xOffset
-            val baseline = textLayout.getLineBaseline(i) + yOffset
-            canvas.drawText(content.subSequence(start, end).toString(), x, baseline, strokePaint)
+            // Layer 3: Crisp thick black outer outline
+            textPaint.clearShadowLayer()
+            textPaint.style = Paint.Style.STROKE
+            textPaint.strokeWidth = 6f * density
+            textPaint.color = Color.BLACK
+            textLayout.draw(canvas)
+
+            // Layer 4: Bright pink fill (#FF2DB8)
+            textPaint.clearShadowLayer()
+            textPaint.style = Paint.Style.FILL
+            textPaint.strokeWidth = 0f
+            textPaint.color = fillColor
+            textLayout.draw(canvas)
+        } finally {
+            textPaint.clearShadowLayer()
+            textPaint.style = origStyle
+            textPaint.strokeWidth = origStrokeWidth
+            textPaint.strokeCap = origStrokeCap
+            textPaint.strokeJoin = origStrokeJoin
+            textPaint.color = origColor
+            canvas.restore()
         }
     }
 
     private companion object {
-        val LIME = 0xFFB8FF00.toInt()
+        const val SKEW_X = -0.0524f // -tan(3 deg)
+        val COLOR_MAGENTA_GLOW = Color.argb(210, 255, 0, 180)
     }
 }

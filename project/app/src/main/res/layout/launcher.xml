@@ -184,54 +184,50 @@
                 android:id="@+id/game_title_header"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginBottom="6dp"
+                android:layout_marginBottom="4dp"
                 android:fontFamily="sans-serif-black"
                 android:gravity="center"
                 android:includeFontPadding="false"
                 android:letterSpacing="0.08"
-                android:rotation="-3"
-                android:shadowColor="#CCFF00B4"
-                android:shadowDx="0"
-                android:shadowDy="0"
-                android:shadowRadius="20"
                 android:text="@string/game_title_display"
                 android:textAllCaps="true"
                 android:textColor="@color/dd_title_fill"
                 android:textSize="22sp"
                 android:textStyle="bold" />
 
-            <ImageView
-                android:id="@+id/game_icon"
-                android:layout_width="72dp"
-                android:layout_height="72dp"
-                android:layout_marginBottom="12dp"
-                android:background="@drawable/icon_bg_rounded"
-                android:clipToOutline="true"
-                android:contentDescription="@null"
-                android:elevation="4dp"
-                android:padding="6dp"
-                android:scaleType="fitCenter"
-                android:src="@drawable/dohna_icon" />
+            <FrameLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="2dp"
+                android:clipChildren="false"
+                android:clipToPadding="false">
 
-            <Button
+                <View
+                    android:layout_width="96dp"
+                    android:layout_height="96dp"
+                    android:layout_gravity="center"
+                    android:background="@drawable/icon_glow_bg"
+                    android:clickable="false"
+                    android:focusable="false" />
+
+                <ImageView
+                    android:id="@+id/game_icon"
+                    android:layout_width="72dp"
+                    android:layout_height="72dp"
+                    android:layout_gravity="center"
+                    android:background="@drawable/icon_bg_rounded"
+                    android:clipToOutline="true"
+                    android:contentDescription="@null"
+                    android:elevation="6dp"
+                    android:padding="2dp"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/dohna_icon" />
+            </FrameLayout>
+
+            <io.github.kichikuou.xsystem4.CyberStartButton
                 android:id="@+id/btn_start_game"
                 android:layout_width="wrap_content"
-                android:layout_height="56dp"
-                android:background="@drawable/btn_start_gradient"
-                android:drawableStart="@drawable/ic_play"
-                android:drawablePadding="10dp"
-                android:elevation="8dp"
-                android:fontFamily="sans-serif-black"
-                android:letterSpacing="0.1"
-                android:minWidth="220dp"
-                android:paddingStart="24dp"
-                android:paddingEnd="30dp"
-                android:stateListAnimator="@null"
-                android:text="@string/start_game"
-                android:textAllCaps="true"
-                android:textColor="@color/dd_btn_text_dark"
-                android:textSize="19sp"
-                android:textStyle="bold" />
+                android:layout_height="wrap_content" />
 
         </LinearLayout>
 
