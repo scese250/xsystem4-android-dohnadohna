@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Layer 1: game artwork splash image (drawable-nodpi/images.jpg) -->
+    <item>
+        <bitmap
+            android:src="@drawable/images"
+            android:gravity="fill"
+            android:tileMode="disabled" />
+    </item>
+
+    <!-- Layer 2: dark semi-transparent overlay (84% opacity).
+         A <shape> is used instead of a bare <color> element so that aapt2
+         keeps working with minSdk 21. -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#D70E0A1A" />
+        </shape>
+    </item>
+
+</layer-list>

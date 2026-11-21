@@ -2,6 +2,9 @@
 <resources>
     <!-- Base application theme. -->
     <style name="AppTheme" parent="android:Theme.NoTitleBar.Fullscreen">
-        <!-- Customize your theme here. -->
+        <!-- Avoid a white flash before the first frame is drawn. -->
+        <item name="android:windowBackground">@color/dd_bg_deep</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowFullscreen">true</item>
     </style>
 </resources>

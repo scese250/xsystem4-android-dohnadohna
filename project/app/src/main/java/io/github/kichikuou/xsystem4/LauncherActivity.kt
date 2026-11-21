@@ -1,13 +1,13 @@
 package io.github.kichikuou.xsystem4
 
 import android.Manifest
+import android.animation.ObjectAnimator
+import android.animation.PropertyValuesHolder
+import android.animation.ValueAnimator
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.ActivityNotFoundException
-import android.content.Context
 import android.content.Intent
-import android.content.res.ColorStateList
-import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -17,53 +17,22 @@ import android.provider.Settings
 import android.text.Html
 import android.text.InputType
 import android.util.Log
-import android.view.LayoutInflater
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
-import android.view.ViewGroup
-import android.widget.BaseAdapter
+import android.view.WindowManager
+import android.view.animation.AccelerateDecelerateInterpolator
+import android.view.animation.PathInterpolator
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.ListView
-import android.widget.TextView
 import android.widget.Toast
 import java.io.File
 
-private const val ICON_SIZE_DP = 40
 private const val STORAGE_PERMISSION_REQUEST = 2
 private const val OPEN_DOCUMENT_TREE_REQUEST = 3
 private const val STATE_AUTO_PROMPTED_PERMISSION = "auto_prompted_permission"
-
-private class GameListAdapter(activity: Activity, private val gameList: GameList) : BaseAdapter() {
-    companion object {
-        private var defaultTextColor: ColorStateList? = null
-    }
-    private val context: Context = activity
-
-    override fun getCount(): Int = gameList.size
-    override fun getItem(position: Int): Any = gameList[position]
-    override fun getItemId(position: Int): Long = position.toLong()
-
-    override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
-        val item = gameList[position]
-        val view = convertView
-            ?: LayoutInflater.from(context).inflate(R.layout.launcher_item, parent, false)
-        val icon = item.getIconBitmap((ICON_SIZE_DP * context.resources.displayMetrics.density).toInt())
-        view.findViewById<ImageView>(R.id.icon).setImageBitmap(icon)
-        val title = view.findViewById<TextView>(R.id.title)
-        if (defaultTextColor == null)
-            defaultTextColor = title.textColors
-        title.text = item.name
-        if (item.error != null)
-            title.setTextColor(Color.GRAY)
-        else
-            title.setTextColor(defaultTextColor)
-        return view
-    }
-}
 
 class LauncherActivity : Activity() {
     companion object {
@@ -71,38 +40,42 @@ class LauncherActivity : Activity() {
     }
 
     private lateinit var gameList: GameList
-    private lateinit var adapter: GameListAdapter
-    private lateinit var listView: ListView
-    private lateinit var emptyView: View
-    private lateinit var permissionPanel: View
-    private lateinit var addFolderFab: Button
+    private lateinit var screenPermission: View
+    private lateinit var screenLocate: View
+    private lateinit var screenGameReady: View
+    private lateinit var btnGrantPermission: Button
+    private lateinit var btnLocateGame: Button
+    private lateinit var btnStartGame: Button
+    private lateinit var gameIcon: ImageView
+
+    private var currentScreen: View? = null
+    private var startButtonAnimator: ObjectAnimator? = null
     private var hasAutoPromptedPermission = false
     private var storageAccessGranted = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        applyImmersiveMode()
         setContentView(R.layout.launcher)
 
-        listView = findViewById<ListView>(R.id.list)
-        emptyView = findViewById<View>(R.id.empty)
-        permissionPanel = findViewById<View>(R.id.permission_required)
-        addFolderFab = findViewById<Button>(R.id.add_folder_fab)
+        screenPermission = findViewById(R.id.screen_permission)
+        screenLocate = findViewById(R.id.screen_locate)
+        screenGameReady = findViewById(R.id.screen_game_ready)
+        btnGrantPermission = findViewById(R.id.permission_button)
+        btnLocateGame = findViewById(R.id.btn_locate_game)
+        btnStartGame = findViewById(R.id.btn_start_game)
+        gameIcon = findViewById(R.id.game_icon)
 
-        findViewById<TextView>(R.id.usage).text = fromHtml(getString(R.string.usage))
-        findViewById<Button>(R.id.permission_button).setOnClickListener {
+        btnGrantPermission.setOnClickListener {
             requestAllFilesAccess()
         }
-        findViewById<Button>(R.id.add_folder_empty).setOnClickListener {
+        btnLocateGame.setOnClickListener {
             openFolderPicker()
         }
-        addFolderFab.setOnClickListener {
+        // Long press on the game icon is a discreet shortcut to change the game folder.
+        gameIcon.setOnLongClickListener {
             openFolderPicker()
-        }
-        listView.setOnItemClickListener { _, _, pos, _ ->
-            onListItemClick(listView.adapter.getItem(pos) as Item)
-        }
-        listView.setOnItemLongClickListener { _, _, pos, _ ->
-            onItemLongClick(listView.adapter.getItem(pos) as Item)
+            true
         }
 
         hasAutoPromptedPermission = savedInstanceState?.getBoolean(STATE_AUTO_PROMPTED_PERMISSION) ?: false
@@ -113,7 +86,6 @@ class LauncherActivity : Activity() {
         } else {
             savedGameList = null
             applyGameList(GameList(this, allowStorageAccess = false))
-            showPermissionRequired()
             if (!hasAutoPromptedPermission) {
                 hasAutoPromptedPermission = true
                 requestAllFilesAccess()
@@ -153,6 +125,24 @@ class LauncherActivity : Activity() {
         }
     }
 
+    override fun onPause() {
+        // Do not keep the pulsing Start Game button animating while the game is in front.
+        stopStartButtonAnimation()
+        super.onPause()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            applyImmersiveMode()
+        }
+    }
+
+    override fun onDestroy() {
+        stopStartButtonAnimation()
+        super.onDestroy()
+    }
+
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putBoolean(STATE_AUTO_PROMPTED_PERMISSION, hasAutoPromptedPermission)
@@ -162,6 +152,25 @@ class LauncherActivity : Activity() {
     // deprecated one behaves identically on every version we support (minSdk 21).
     @Suppress("DEPRECATION")
     private fun fromHtml(text: String): CharSequence = Html.fromHtml(text)
+
+    @Suppress("DEPRECATION") // systemUiVisibility is the only immersive-mode API available on
+                             // API 21-29 without AndroidX WindowInsetsControllerCompat.
+    private fun applyImmersiveMode() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
+        window.decorView.systemUiVisibility = (
+            View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_FULLSCREEN
+                or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            )
+    }
 
     override fun onRequestPermissionsResult(
         requestCode: Int,
@@ -240,26 +249,112 @@ class LauncherActivity : Activity() {
 
     private fun applyGameList(newGameList: GameList) {
         gameList = newGameList
-        adapter = GameListAdapter(this, gameList)
-        listView.adapter = adapter
         updateEmptyState()
     }
 
     private fun updateEmptyState() {
-        if (!storageAccessGranted) {
-            permissionPanel.visibility = View.VISIBLE
-            listView.visibility = View.GONE
-            emptyView.visibility = View.GONE
-            addFolderFab.visibility = View.GONE
+        when {
+            !storageAccessGranted -> {
+                stopStartButtonAnimation()
+                showScreenAnimated(screenPermission)
+            }
+            gameList.size == 0 -> {
+                stopStartButtonAnimation()
+                showScreenAnimated(screenLocate)
+            }
+            else -> {
+                // Prefer the first game that loaded correctly; fall back to the first entry so
+                // that the user can still see the error dialog if every folder is broken.
+                val item = (0 until gameList.size)
+                    .map { gameList[it] }
+                    .firstOrNull { it.error == null } ?: gameList[0]
+                btnStartGame.setOnClickListener {
+                    onListItemClick(item)
+                }
+                updateGameIcon(item)
+                showScreenAnimated(screenGameReady)
+                startStartButtonAnimation(btnStartGame)
+            }
+        }
+    }
+
+    private fun updateGameIcon(item: Item) {
+        val sizePx = (72 * resources.displayMetrics.density).toInt()
+        val bitmap = try {
+            item.getIconBitmap(sizePx)
+        } catch (e: Exception) {
+            Log.w("LauncherActivity", "Failed to load the game icon", e)
+            null
+        }
+        if (bitmap != null) {
+            gameIcon.setImageBitmap(bitmap)
+        } else {
+            // Keep the Dohna Dohna icon when the game has no .ico/exe icon.
+            gameIcon.setImageResource(R.drawable.dohna_icon)
+        }
+    }
+
+    private fun showScreenAnimated(target: View) {
+        val current = currentScreen
+        if (current === target) {
             return
         }
-        val hasGames = gameList.size > 0
-        permissionPanel.visibility = View.GONE
-        listView.visibility = if (hasGames) View.VISIBLE else View.GONE
-        emptyView.visibility = if (hasGames) View.GONE else View.VISIBLE
-        // Show the + button prominently while no game has been found. When games are listed it is
-        // hidden to avoid overlapping the list; the "Add Game Folder" menu entry stays available.
-        addFolderFab.visibility = if (hasGames) View.GONE else View.VISIBLE
+        currentScreen = target
+
+        target.animate().cancel()
+        target.alpha = 0f
+        target.scaleX = 0.94f
+        target.scaleY = 0.94f
+        target.visibility = View.VISIBLE
+        target.animate()
+            .alpha(1f)
+            .scaleX(1f)
+            .scaleY(1f)
+            .setDuration(350L)
+            .setInterpolator(PathInterpolator(0.4f, 0f, 0.2f, 1f))
+            .start()
+
+        if (current != null) {
+            current.animate().cancel()
+            current.animate()
+                .alpha(0f)
+                .scaleX(0.94f)
+                .scaleY(0.94f)
+                .setDuration(300L)
+                .setInterpolator(PathInterpolator(0.4f, 0f, 0.2f, 1f))
+                .withEndAction {
+                    if (currentScreen !== current) {
+                        current.visibility = View.GONE
+                    }
+                }
+                .start()
+        }
+    }
+
+    private fun startStartButtonAnimation(btn: Button) {
+        if (startButtonAnimator != null) {
+            return
+        }
+        val animator = ObjectAnimator.ofPropertyValuesHolder(
+            btn,
+            PropertyValuesHolder.ofFloat(View.SCALE_X, 1.0f, 1.025f),
+            PropertyValuesHolder.ofFloat(View.SCALE_Y, 1.0f, 1.025f),
+            PropertyValuesHolder.ofFloat(View.ALPHA, 1.0f, 0.92f)
+        )
+        animator.duration = 2000L
+        animator.repeatCount = ValueAnimator.INFINITE
+        animator.repeatMode = ValueAnimator.REVERSE
+        animator.interpolator = AccelerateDecelerateInterpolator()
+        animator.start()
+        startButtonAnimator = animator
+    }
+
+    private fun stopStartButtonAnimation() {
+        startButtonAnimator?.cancel()
+        startButtonAnimator = null
+        btnStartGame.scaleX = 1f
+        btnStartGame.scaleY = 1f
+        btnStartGame.alpha = 1f
     }
 
     private fun showPermissionRequired() {
@@ -289,46 +384,6 @@ class LauncherActivity : Activity() {
         i.putExtra(XSystem4Activity.EXTRA_SAVE_DIR, item.savedir!!.path)
         i.putExtra(XSystem4Activity.EXTRA_ENCODING, item.encoding)
         startActivity(i)
-    }
-
-    private fun onItemLongClick(item: Item): Boolean {
-        if (item.customPathRoot != null) {
-            AlertDialog.Builder(this)
-                .setTitle(R.string.uninstall_dialog_title)
-                .setMessage(getString(R.string.remove_custom_folder_message, item.customPathRoot))
-                .setPositiveButton(R.string.ok) { _, _ ->
-                    CustomGamePaths.removeCustomPath(this, item.customPathRoot)
-                    if (hasAllFilesPermission()) {
-                        applyGameList(getGameList(refresh = true))
-                    } else {
-                        updateEmptyState()
-                    }
-                }
-                .setNegativeButton(R.string.cancel, null)
-                .show()
-            return true
-        }
-        if (item.isDirectExternal) {
-            Toast.makeText(
-                this,
-                getString(R.string.external_uninstall_notice, item.path.parentFile?.path ?: item.path.path),
-                Toast.LENGTH_LONG
-            ).show()
-            return true
-        }
-        if (!ensureStoragePermission()) {
-            return true
-        }
-        AlertDialog.Builder(this).setTitle(R.string.uninstall_dialog_title)
-            .setMessage(getString(R.string.uninstall_dialog_message, item.name))
-            .setPositiveButton(R.string.ok) {_, _ ->
-                gameList.uninstall(item)
-                adapter.notifyDataSetChanged()
-                updateEmptyState()
-            }
-            .setNegativeButton(R.string.cancel) {_, _ -> }
-            .show()
-        return true
     }
 
     private fun hasAllFilesPermission(): Boolean {

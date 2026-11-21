@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">xsystem4</string>
+    <string name="app_name">doHna:doHna</string>
     <string name="action_refresh">Refresh</string>
     <string name="action_add_game_folder">Add Game Folder</string>
     <string name="action_add_game_folder_manual">Enter Folder Path Manually</string>
@@ -54,4 +54,25 @@
             <p>If the app asks for storage access, allow &quot;All files access&quot;.</p>
         ]]>
     </string>
+
+    <!-- New launcher interface -->
+    <string name="perm_title">Permission Required</string>
+    <string name="perm_desc">Permission is required to save your game progress.</string>
+    <string name="perm_button">Grant Permission</string>
+    <string name="locate_title">Select the game folder</string>
+    <string name="locate_button">Locate Game</string>
+    <string name="start_game">Start Game</string>
+    <string name="game_title_display">Dohna Dohna Android Ver.</string>
+
+    <!-- Gesture labels -->
+    <string name="gesture_left_click">Left Click</string>
+    <string name="gesture_left_click_sub">Single Tap</string>
+    <string name="gesture_right_click">Right Click</string>
+    <string name="gesture_right_click_sub">2-Finger Tap</string>
+    <string name="gesture_fast_skip">Fast Skip</string>
+    <string name="gesture_fast_skip_sub">Touch &amp; Hold</string>
+    <string name="gesture_backlog">Backlog</string>
+    <string name="gesture_backlog_sub">2-Finger Swipe</string>
+    <string name="gesture_close_menu">Close Menu</string>
+    <string name="gesture_close_menu_sub">Back Gesture</string>
 </resources>

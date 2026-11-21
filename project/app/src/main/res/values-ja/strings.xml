@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">xsystem4</string>
+    <string name="app_name">doHna:doHna</string>
     <string name="action_refresh">更新</string>
     <string name="action_add_game_folder">ゲームフォルダを追加</string>
     <string name="action_add_game_folder_manual">フォルダパスを手入力</string>
@@ -54,4 +54,25 @@
             <p>ストレージへのアクセスを求められた場合は「すべてのファイルへのアクセス」を許可してください。</p>
         ]]>
     </string>
+
+    <!-- New launcher interface -->
+    <string name="perm_title">権限が必要です</string>
+    <string name="perm_desc">ゲームの進行状況を保存するには権限が必要です。</string>
+    <string name="perm_button">権限を許可</string>
+    <string name="locate_title">ゲームフォルダを選択</string>
+    <string name="locate_button">ゲームを探す</string>
+    <string name="start_game">ゲームを開始</string>
+    <string name="game_title_display">Dohna Dohna Android Ver.</string>
+
+    <!-- Gesture labels -->
+    <string name="gesture_left_click">左クリック</string>
+    <string name="gesture_left_click_sub">シングルタップ</string>
+    <string name="gesture_right_click">右クリック</string>
+    <string name="gesture_right_click_sub">2本指タップ</string>
+    <string name="gesture_fast_skip">高速スキップ</string>
+    <string name="gesture_fast_skip_sub">長押し</string>
+    <string name="gesture_backlog">バックログ</string>
+    <string name="gesture_backlog_sub">2本指スワイプ</string>
+    <string name="gesture_close_menu">メニューを閉じる</string>
+    <string name="gesture_close_menu_sub">戻るジェスチャー</string>
 </resources>

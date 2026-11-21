@@ -3,4 +3,19 @@
     <color name="colorPrimary">#3F51B5</color>
     <color name="colorPrimaryDark">#303F9F</color>
     <color name="colorAccent">#FF4081</color>
+
+    <!-- Dohna Dohna launcher palette -->
+    <color name="dd_bg_deep">#07050D</color>
+    <color name="dd_bg_card">#120E22</color>
+    <color name="dd_neon_pink">#FF2A85</color>
+    <color name="dd_neon_cyan">#00F0FF</color>
+    <color name="dd_neon_lime">#B8FF00</color>
+    <color name="dd_neon_yellow">#FBEE03</color>
+    <color name="dd_neon_green_start">#D4FF00</color>
+    <color name="dd_neon_green_mid">#46F772</color>
+    <color name="dd_magenta_shadow">#FF007F</color>
+    <color name="dd_title_fill">#FF2DB8</color>
+    <color name="dd_btn_text_dark">#080512</color>
+    <color name="dd_muted">#B8B3CE</color>
+    <color name="dd_dark_border">#24FFFFFF</color>
 </resources>
