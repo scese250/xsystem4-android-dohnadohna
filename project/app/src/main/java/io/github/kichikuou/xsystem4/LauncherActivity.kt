@@ -205,9 +205,12 @@ class LauncherActivity : Activity() {
                 true
             }
             R.id.help -> {
-                AlertDialog.Builder(this)
-                    .setMessage(fromHtml(getString(R.string.usage)))
-                    .show()
+                DohnaConfirmDialog.showNotice(
+                    activity = this,
+                    badgeText = "HELP",
+                    message = fromHtml(getString(R.string.usage)),
+                    okText = getString(R.string.ok)
+                )
                 true
             }
             R.id.licenses -> {
@@ -322,11 +325,11 @@ class LauncherActivity : Activity() {
 
     private fun onListItemClick(item: Item) {
         if (item.error != null) {
-            AlertDialog.Builder(this)
-                .setTitle(R.string.error)
-                .setMessage(item.error)
-                .setPositiveButton("OK", null)
-                .show()
+            DohnaConfirmDialog.showError(
+                activity = this,
+                message = item.error,
+                okText = getString(R.string.ok)
+            )
             return
         }
         val i = Intent()

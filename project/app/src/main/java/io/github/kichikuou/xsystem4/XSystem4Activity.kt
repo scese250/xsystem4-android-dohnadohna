@@ -3,7 +3,9 @@ package io.github.kichikuou.xsystem4
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.Looper
 import android.os.Process
+import android.view.View
 import android.view.WindowManager
 import org.libsdl.app.SDLActivity
 import java.io.File
@@ -19,6 +21,10 @@ class XSystem4Activity : SDLActivity() {
         const val EXTRA_ENCODING = "ENCODING"
         const val COMMAND_OPEN_PLAYING_MANUAL = 0x8000  // xsystem4/src/hll/SystemService.c
     }
+
+    private var activeMessageDialog: DohnaConfirmDialog? = null
+    @Volatile
+    private var activeMessageUnblock: (() -> Unit)? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -73,8 +79,140 @@ class XSystem4Activity : SDLActivity() {
         return args
     }
 
+    override fun messageboxShowMessageBox(
+        flags: Int,
+        title: String?,
+        message: String?,
+        buttonFlags: IntArray?,
+        buttonIds: IntArray?,
+        buttonTexts: Array<String?>?,
+        colors: IntArray?
+    ): Int {
+        val safeFlags = buttonFlags ?: IntArray(0)
+        val safeIds = buttonIds ?: IntArray(0)
+        val safeTexts = buttonTexts ?: emptyArray()
+        if (safeFlags.size != safeIds.size || safeIds.size != safeTexts.size) {
+            return -1
+        }
+        if (isFinishing || isDestroyed) {
+            return -1
+        }
+
+        val lock = Object()
+        val result = IntArray(1) { -1 }
+        var done = false
+        val unblock = {
+            synchronized(lock) {
+                done = true
+                lock.notifyAll()
+            }
+        }
+        activeMessageUnblock = unblock
+
+        val buttons = ArrayList<DohnaConfirmDialog.ButtonSpec>(safeIds.size)
+        for (i in safeIds.indices) {
+            buttons.add(
+                DohnaConfirmDialog.ButtonSpec(
+                    id = safeIds[i],
+                    text = safeTexts[i] ?: "",
+                    flags = safeFlags[i]
+                )
+            )
+        }
+
+        runOnUiThread {
+            try {
+                if (isFinishing || isDestroyed) {
+                    activeMessageUnblock = null
+                    unblock()
+                    return@runOnUiThread
+                }
+
+                val dialog = DohnaConfirmDialog.fromSdlMessageBox(
+                    activity = this,
+                    sdlFlags = flags,
+                    title = title,
+                    message = message ?: "",
+                    buttons = buttons,
+                    onResult = { selectedId ->
+                        synchronized(lock) {
+                            result[0] = selectedId
+                        }
+                    }
+                )
+                activeMessageDialog = dialog
+                dialog.setOnDismissListener {
+                    if (activeMessageDialog === dialog) {
+                        activeMessageDialog = null
+                    }
+                    if (activeMessageUnblock === unblock) {
+                        activeMessageUnblock = null
+                    }
+                    restoreImmersiveWindow()
+                    unblock()
+                }
+                dialog.show()
+            } catch (e: Exception) {
+                activeMessageDialog = null
+                if (activeMessageUnblock === unblock) {
+                    activeMessageUnblock = null
+                }
+                synchronized(lock) {
+                    result[0] = -1
+                }
+                unblock()
+            }
+        }
+
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            return result[0]
+        }
+
+        synchronized(lock) {
+            while (!done) {
+                try {
+                    lock.wait()
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    break
+                }
+            }
+        }
+
+        if (!isFinishing && !isDestroyed) {
+            SDLActivity.setWindowStyle(true)
+        }
+        return result[0]
+    }
+
+    @Suppress("DEPRECATION")
+    private fun restoreImmersiveWindow() {
+        if (isFinishing || isDestroyed) return
+        val decor = window?.decorView ?: return
+        decor.systemUiVisibility = (
+            View.SYSTEM_UI_FLAG_FULLSCREEN
+                or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                or View.INVISIBLE
+            )
+        window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+        window.clearFlags(WindowManager.LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
+        SDLActivity.mFullscreenModeActive = true
+    }
+
     override fun onDestroy() {
         try {
+            activeMessageDialog?.let { dialog ->
+                activeMessageDialog = null
+                if (dialog.isShowing) {
+                    dialog.dismiss()
+                }
+            }
+            activeMessageUnblock?.invoke()
+            activeMessageUnblock = null
             // Let SDL stop and join its native thread before terminating the game process.
             super.onDestroy()
         } finally {
