@@ -40,7 +40,7 @@ jobs:
         cd project
         if [ -n "$KEYSTORE_BASE64" ]; then
           echo "$KEYSTORE_BASE64" | base64 -d > keystore.jks
-          JAVA_HOME=$JAVA_HOME_17_X64 ./gradlew assembleRelease
+          JAVA_HOME=$JAVA_HOME_17_X64 ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME ./gradlew assembleRelease
           cp app/build/outputs/apk/release/app-release.apk xsystem4-arm64-release.apk
         else
           JAVA_HOME=$JAVA_HOME_17_X64 ./gradlew assembleDebug
